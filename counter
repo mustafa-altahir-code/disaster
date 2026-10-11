@@ -1,1 +1,1980 @@
+/*!
+* Counter
+* Discribtion: Display submitted cases count and reports with live transition diagnostics
+* Author: Mustafa Altahir
+* Version: 5.4
+* Created: April 2025
+* Updated: October 2026
+*/
 
+(function () {
+// ─── Global Variables ─────────────────────────────────────
+let isSearchActive = false;
+let searchQuery = '';
+let currentModal = null;
+let currentOverlay = null;
+let currentAllData = [];
+let currentFilteredData = [];
+
+function checkCondition() {
+return [...document.querySelectorAll("p")]
+.some(p => p.textContent.trim() === "المشرف الجيومكاني");
+}
+
+function waitForCondition() {
+if (checkCondition()) init();
+else {
+const o = new MutationObserver(() => {
+if (checkCondition()) {
+o.disconnect();
+init();
+}
+});
+o.observe(document.body, { childList: true, subtree: true });
+}
+}
+
+document.readyState === "loading"
+? document.addEventListener("DOMContentLoaded", waitForCondition)
+: waitForCondition();
+
+function init() {
+const loadXLSX = () => new Promise((resolve, reject) => {
+if (window.XLSX) return resolve(window.XLSX);
+reject(new Error("XLSX not available."));
+});
+
+const STORAGE_KEY = "clickCounterHistory";
+const SETTINGS_KEY = "caseSettings";
+
+const COLORS = [
+"#0A3556",
+"#824131",
+"#367580",
+"#BC9975"
+];
+
+const CYCLE_DURATION = 15000;
+const TRANSITION_DURATION = 300;
+let colorIndex = 0;
+
+const today = () => new Date().toISOString().split("T")[0];
+
+let settings = {
+darkMode: false,
+autoHide: false,
+counterHidden: false
+};
+
+const loadSettings = () => {
+const s = localStorage.getItem(SETTINGS_KEY);
+if (s) settings = JSON.parse(s);
+};
+
+const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+
+loadSettings();
+
+const load = () => {
+try {
+const data = localStorage.getItem(STORAGE_KEY);
+if (!data) return {};
+const parsed = JSON.parse(data);
+if (typeof parsed !== 'object' || parsed === null) return {};
+return parsed;
+} catch (e) {
+console.error('Error loading data:', e);
+return {};
+}
+};
+
+const save = d => localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+
+// ─── استخراج رقم الطلب (FR / DU) والعنصر الخاص به ─────────
+const getCaseInfo = () => {
+    var caseElement = document.querySelector('.uppercase.text-\\[12px\\]') || 
+                      document.querySelector('span.uppercase.text-\\[12px\\]');
+    if (caseElement) {
+        var text = caseElement.textContent.trim();
+        var match = text.match(/(FR|DU)\s*(\d+)/i);
+        if (match) {
+            return {
+                element: caseElement,
+                id: match[1].toUpperCase() + match[2],
+                rawText: text
+            };
+        }
+        return { element: caseElement, id: text, rawText: text };
+    }
+    return { element: null, id: "N/A", rawText: "N/A" };
+};
+
+const extractTextInfo = () => {
+    var textarea = document.querySelector("textarea");
+    if (textarea) {
+        return {
+            element: textarea,
+            text: textarea.value.trim() || "N/A"
+        };
+    }
+    return { element: null, text: "N/A" };
+};
+
+const flatten = () => {
+const h = load();
+const out = [];
+try {
+Object.keys(h).forEach(function(date) {
+const arr = h[date];
+if (Array.isArray(arr)) {
+arr.forEach(function(r, i) {
+if (r && typeof r === 'object') {
+out.push({
+date: date,
+idx: i + 1,
+fr: r.fr || 'N/A',
+text: r.text || 'N/A'
+});
+}
+});
+}
+});
+} catch (e) {
+console.error('Error flattening data:', e);
+}
+return out.sort(function(a, b) { return a.date.localeCompare(b.date); });
+};
+
+const getTotal = function() {
+try {
+const h = load();
+let total = 0;
+Object.keys(h).forEach(function(key) {
+const arr = h[key];
+if (Array.isArray(arr)) {
+total += arr.length;
+}
+});
+return total;
+} catch (e) {
+console.error('Error calculating total:', e);
+return 0;
+}
+};
+
+const ASSIGNMENT_TEXT = "تعيين الطلب لمدقق الطلبات";
+
+// ─── قراءة الـ Dropdown مع إعادة العنصر ────────────────────
+function getDropdownInfo() {
+    var dropdowns = document.querySelectorAll('.drop-down-box.css-b62m3t-container');
+    if (dropdowns.length < 2) {
+        return { element: null, value: '' };
+    }
+    var dropdown = dropdowns[1];
+    var selectedValue = dropdown.querySelector('.css-z588e4-singleValue');
+    return {
+        element: dropdown,
+        value: selectedValue ? selectedValue.textContent.trim() : ''
+    };
+}
+
+// ─── نظام الإشعارات المتطور والمميز بالألوان ───────────────
+function showStageToast(stage, title, details) {
+    var existingToast = document.getElementById('stage-notification-toast');
+    if (existingToast) existingToast.remove();
+
+    var colors = {
+        capture: { bg: '#1E40AF', border: '#60A5FA', icon: '🔵' }, // مرحلة الالتقاط
+        waiting: { bg: '#9A3412', border: '#FB923C', icon: '🟠' }, // مرحلة المراقبة والانتظار
+        success: { bg: '#065F46', border: '#34D399', icon: '🟢' }, // نجاح الانتقال والتسجيل
+        error:   { bg: '#991B1B', border: '#F87171', icon: '🔴' }  // خطأ أو عدم تطابق
+    };
+
+    var config = colors[stage] || colors.capture;
+    var toast = document.createElement('div');
+    toast.id = 'stage-notification-toast';
+
+    Object.assign(toast.style, {
+        position: 'fixed',
+        top: '20px',
+        left: '50%',
+        transform: 'translateX(-50%) translateY(-20px)',
+        background: config.bg,
+        color: '#FFFFFF',
+        padding: '14px 24px',
+        borderRadius: '14px',
+        boxShadow: '0 15px 45px rgba(0,0,0,0.45)',
+        border: '2px solid ' + config.border,
+        fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
+        fontSize: '14px',
+        fontWeight: '600',
+        zIndex: 9999999,
+        opacity: '0',
+        transition: 'all 0.35s cubic-bezier(0.2, 0.8, 0.2, 1)',
+        maxWidth: '550px',
+        textAlign: 'center',
+        direction: 'rtl',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)'
+    });
+
+    var detailsHTML = details ? '<div style="font-size:12px;opacity:0.9;font-weight:400;margin-top:4px;">' + details + '</div>' : '';
+    toast.innerHTML = config.icon + ' ' + title + detailsHTML;
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(function() {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(-50%) translateY(0)';
+    });
+
+    if (stage !== 'waiting') {
+        setTimeout(function() {
+            if (toast && toast.parentNode) {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(-50%) translateY(-20px)';
+                setTimeout(() => toast.remove(), 400);
+            }
+        }, 5000);
+    }
+}
+
+// ─── لوحة التقرير التشخيصي للانتقال (DOM Transition Report) ──
+function showDiagnosticsBox(info) {
+    var existingBox = document.getElementById('transition-diagnostics-box');
+    if (existingBox) existingBox.remove();
+
+    var box = document.createElement('div');
+    box.id = 'transition-diagnostics-box';
+    Object.assign(box.style, {
+        position: 'fixed',
+        bottom: '20px',
+        right: '20px',
+        width: '320px',
+        background: '#111827',
+        color: '#F9FAFB',
+        border: '1px solid #374151',
+        borderRadius: '12px',
+        padding: '14px',
+        fontSize: '12px',
+        fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
+        zIndex: 9999998,
+        boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+        direction: 'rtl'
+    });
+
+    box.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:700;color:#60A5FA;">
+            <span>📋 تقرير تغير عناصر الصفحة</span>
+            <span style="font-size:10px;cursor:pointer;color:#9CA3AF;" onclick="this.parentElement.parentElement.remove()">✕</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px;">
+            <div>• نوع الطلب القديم: <span style="color:#FBBF24;">${info.caseId}</span></div>
+            <div>• اختفاء عنصر الطلب: <span id="diag-case-status" style="color:#F87171;">قيد المراقبة...</span></div>
+            <div>• اختفاء عنصر التعليق: <span id="diag-text-status" style="color:#F87171;">قيد المراقبة...</span></div>
+            <div>• اختفاء القائمة (Dropdown): <span id="diag-drop-status" style="color:#F87171;">قيد المراقبة...</span></div>
+        </div>
+    `;
+    document.body.appendChild(box);
+    return box;
+}
+
+// ─── تسجيل الحالة في التخزين ─────────────────────────────
+function recordCase(caseId, text) {
+    try {
+        var h = load();
+        var d = today();
+        
+        if (!h[d] || !Array.isArray(h[d])) {
+            h[d] = [];
+        }
+        
+        var exists = false;
+        for (var i = 0; i < h[d].length; i++) {
+            if (h[d][i] && h[d][i].fr === caseId && h[d][i].text === text) {
+                exists = true;
+                break;
+            }
+        }
+        
+        if (exists) {
+            return { success: false, reason: 'duplicate' };
+        }
+        
+        h[d].push({
+            fr: caseId,
+            text: text
+        });
+        save(h);
+        updateCounter();
+        highlightNewRecord();
+        
+        return { success: true };
+    } catch (e) {
+        console.error('Error recording case:', e);
+        return { success: false, reason: 'error', error: e };
+    }
+}
+
+// ─── معالج الضغط على «متابعة» مع نظام المراقبة الدقيق ─────
+let isObservingTransition = false;
+
+document.addEventListener("click", function(e) {
+    // التقاط الزر سواء عبر المحدد الأصلي أو عبر نص الزر لضمان عدم تفويت الضغطة
+    var continueBtn = document.querySelector(
+        '#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div.mt-12 > div:nth-child(13) > div.flex.justify-between.items-center > div > div > button'
+    );
+
+    var target = e.target;
+    var clickedContinue = false;
+
+    if (continueBtn && (target === continueBtn || continueBtn.contains(target))) {
+        clickedContinue = true;
+    } else {
+        // فحص بديل في حال تغير مسار الزر قليلاً في DOM
+        var btnElement = target.closest('button');
+        if (btnElement && btnElement.textContent.trim().includes("متابعة")) {
+            clickedContinue = true;
+        }
+    }
+
+    if (!clickedContinue) return;
+    if (isObservingTransition) return; // منع التكرار
+
+    // 1. قراءة وحفظ بيانات وعناصر الشروط الحالية
+    var caseInfo = getCaseInfo();
+    var textInfo = extractTextInfo();
+    var dropdownInfo = getDropdownInfo();
+
+    var caseValid = caseInfo.id && caseInfo.id !== "N/A" && /^(FR|DU)/i.test(caseInfo.id);
+    var textValid = textInfo.text && textInfo.text !== "N/A" && textInfo.text.length > 0;
+    var dropdownMatch = dropdownInfo.value === ASSIGNMENT_TEXT;
+
+    // إذا كانت الشروط غير مكتملة، عرض تنبيه باللون الأحمر
+    if (!caseValid || !textValid || !dropdownMatch) {
+        var missing = [];
+        if (!caseValid) missing.push("رقم الطلب غير صالح أو لا يبدأ بـ FR أو DU (" + caseInfo.id + ")");
+        if (!textValid) missing.push("نص التعليق فارغ");
+        if (!dropdownMatch) missing.push("القائمة ليست: " + ASSIGNMENT_TEXT + " (القيمة الحالية: " + (dropdownInfo.value || "فارغة") + ")");
+        
+        showStageToast('error', '❌ تعذر بدء التسجيل: الشروط غير مكتملة', missing.join(" | "));
+        return;
+    }
+
+    // 2. المرحلة الأولى: تم التقاط العناصر وحفظ مراجعها (أزرق)
+    showStageToast('capture', '🔵 المرحلة 1: تم حفظ شروط الطلب ' + caseInfo.id, 'تم رصد FR/DU والتعليق والـ Dropdown. بانتظار استجابة الصفحة...');
+
+    const savedElements = {
+        caseEl: caseInfo.element,
+        textEl: textInfo.element,
+        dropEl: dropdownInfo.element,
+        oldCaseId: caseInfo.id,
+        oldText: textInfo.text
+    };
+
+    var diagBox = showDiagnosticsBox(savedElements);
+    isObservingTransition = true;
+
+    // 3. المرحلة الثانية: بدء المراقبة بانتظار اختفاء العناصر أو تغير الصفحة (برتقالي)
+    setTimeout(() => {
+        if (isObservingTransition) {
+            showStageToast('waiting', '🟠 المرحلة 2: جاري مراقبة اختفاء العناصر وتحديث الصفحة...', 'يتم التحقق من اختفاء عناصر الطلب السابقة...');
+        }
+    }, 400);
+
+    const checkDisappearanceOrChange = () => {
+        // فحص هل خرجت كائنات العناصر السابقة نفسها من شجرة الصفحة
+        var caseRemoved = !savedElements.caseEl || !document.body.contains(savedElements.caseEl);
+        var textRemoved = !savedElements.textEl || !document.body.contains(savedElements.textEl);
+        var dropRemoved = !savedElements.dropEl || !document.body.contains(savedElements.dropEl);
+
+        // فحص إضافي ذكي (تحديث نصوص وحقول الصفحة في حال أعادت React استخدام العناصر)
+        var currentCase = getCaseInfo();
+        var caseChanged = currentCase.id !== savedElements.oldCaseId;
+        var textEmptiedOrChanged = savedElements.textEl && (savedElements.textEl.value !== savedElements.oldText);
+
+        // تحديث الصندوق التشخيصي
+        var diagCase = document.getElementById('diag-case-status');
+        var diagText = document.getElementById('diag-text-status');
+        var diagDrop = document.getElementById('diag-drop-status');
+
+        if (diagCase) {
+            if (caseRemoved || caseChanged) {
+                diagCase.innerHTML = '✅ اختفى / تغيّر الطلب';
+                diagCase.style.color = '#34D399';
+            }
+        }
+        if (diagText) {
+            if (textRemoved || textEmptiedOrChanged) {
+                diagText.innerHTML = '✅ اختفى / تم إفراغ النص';
+                diagText.style.color = '#34D399';
+            }
+        }
+        if (diagDrop) {
+            if (dropRemoved) {
+                diagDrop.innerHTML = '✅ اختفت القائمة القديمة';
+                diagDrop.style.color = '#34D399';
+            }
+        }
+
+        // تعتبر الصفحة انتقلت إذا اختفت العناصر القديمة من الـ DOM
+        // أو إذا تغير رقم الطلب وأفرغ حقل التعليق (تأكيد انتقال الصفحة للطلب التالي)
+        var allDisappeared = (caseRemoved && textRemoved && dropRemoved);
+        var pageAdvanced = caseChanged && (textRemoved || textEmptiedOrChanged);
+
+        return allDisappeared || pageAdvanced;
+    };
+
+    const observer = new MutationObserver(() => {
+        if (checkDisappearanceOrChange()) {
+            observer.disconnect();
+            clearTimeout(timeoutId);
+            isObservingTransition = false;
+
+            // 4. المرحلة الثالثة: تأكيد نجاح الانتقال والتسجيل (أخضر)
+            var result = recordCase(savedElements.oldCaseId, savedElements.oldText);
+            
+            if (result.success) {
+                showStageToast('success', '🟢 المرحلة 3: تم تأكيد الانتقال وتسجيل الطلب بنجاح!', 'تم حفظ الطلب: ' + savedElements.oldCaseId);
+            } else if (result.reason === 'duplicate') {
+                showStageToast('error', '⚠️ الطلب مسجل مسبقاً', 'تم الانتقال بنجاح ولكن الطلب ' + savedElements.oldCaseId + ' موجود بالفعل في السجل');
+            } else {
+                showStageToast('error', '❌ حدث خطأ أثناء الحفظ', 'يرجى مراجعة الذاكرة المؤقتة');
+            }
+
+            // إخفاء الصندوق التشخيصي بعد ثانيتين من النجاح
+            setTimeout(() => {
+                if (diagBox) diagBox.remove();
+            }, 3000);
+        }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+
+    // مهلة في حال لم تتغير الصفحة مطلقاً
+    const timeoutId = setTimeout(() => {
+        if (isObservingTransition) {
+            observer.disconnect();
+            isObservingTransition = false;
+            showStageToast('error', '❌ مهلة الانتظار انتهت: لم تتغير الصفحة', 'لم تختفِ العناصر السابقة من الـ DOM، لذلك لم يتم التسجيل لضمان عدم التكرار');
+        }
+    }, 12000);
+
+}, true);
+
+// ─── Highlight Counter ──────────────────────────────────
+function highlightNewRecord() {
+    var color = COLORS[colorIndex];
+    
+    var glowLayer = document.createElement('div');
+    Object.assign(glowLayer.style, {
+        position: 'fixed',
+        top: '14px',
+        right: '14px',
+        width: '52px',
+        height: '52px',
+        borderRadius: '50%',
+        background: color,
+        zIndex: '99997',
+        pointerEvents: 'none',
+        opacity: '0.8',
+        filter: 'blur(20px)',
+        transform: 'scale(1)'
+    });
+    
+    document.body.appendChild(glowLayer);
+    
+    glowLayer.animate([
+        { transform: 'scale(1)', opacity: 0.8, filter: 'blur(20px)' },
+        { transform: 'scale(2.5)', opacity: 0.6, filter: 'blur(30px)' },
+        { transform: 'scale(3.5)', opacity: 0, filter: 'blur(40px)' }
+    ], {
+        duration: 1200,
+        easing: "cubic-bezier(0.2, 0.8, 0.2, 1)"
+    });
+    
+    var fireImg = document.createElement('img');
+    fireImg.src = typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL
+        ? chrome.runtime.getURL('Fire.gif')
+        : 'Fire.gif';
+    
+    Object.assign(fireImg.style, {
+        position: 'fixed',
+        top: '14px',
+        right: '14px',
+        width: '52px',
+        height: '52px',
+        zIndex: '99997',
+        pointerEvents: 'none',
+        opacity: '0',
+        transform: 'scale(0.5)',
+        transition: 'all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)',
+        filter: getColorFilter(colorIndex),
+        objectFit: 'contain'
+    });
+    
+    document.body.appendChild(fireImg);
+    
+    requestAnimationFrame(function() {
+        fireImg.style.opacity = '1';
+        fireImg.style.transform = 'scale(1.3)';
+    });
+    
+    counter.animate([
+        { transform: 'scale(1)' },
+        { transform: 'scale(1.35)' },
+        { transform: 'scale(1)' }
+    ], {
+        duration: 900,
+        easing: "cubic-bezier(0.2, 0.8, 0.2, 1)"
+    });
+    
+    setTimeout(function() {
+        if (glowLayer && glowLayer.parentNode) glowLayer.parentNode.removeChild(glowLayer);
+    }, 1300);
+    
+    setTimeout(function() {
+        fireImg.style.opacity = '0';
+        fireImg.style.transform = 'scale(0.5)';
+        setTimeout(function() {
+            if (fireImg && fireImg.parentNode) fireImg.parentNode.removeChild(fireImg);
+        }, 400);
+    }, 2000);
+}
+
+function getColorFilter(index) {
+    var filters = [
+        'hue-rotate(190deg) saturate(2) brightness(0.8)',
+        'hue-rotate(340deg) saturate(1.5) brightness(1)',
+        'hue-rotate(160deg) saturate(1.3) brightness(1)',
+        'sepia(0.6) saturate(1.5) brightness(1.1)'
+    ];
+    return filters[index % filters.length];
+}
+
+// ─── Counter ─────────────────────────────────────────────
+const initialColor = COLORS[0];
+
+const counter = document.createElement("div");
+counter.id = "case-counter";
+
+Object.assign(counter.style, {
+position: "fixed",
+top: "14px",
+right: "14px",
+width: "52px",
+height: "52px",
+borderRadius: "50%",
+background: 'linear-gradient(135deg, ' + initialColor + 'cc, ' + initialColor + '88)',
+overflow: "hidden",
+backdropFilter: "blur(12px)",
+WebkitBackdropFilter: "blur(12px)",
+border: '1.5px solid ' + initialColor + '66',
+color: "#fff",
+fontWeight: "700",
+fontSize: "20px",
+fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+display: "flex",
+alignItems: "center",
+justifyContent: "center",
+cursor: "pointer",
+zIndex: "99999",
+transition: 'all ' + TRANSITION_DURATION + 'ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+boxShadow: '0 8px 32px ' + initialColor + '33, 0 2px 8px rgba(0,0,0,0.06)',
+textShadow: "0 2px 4px rgba(0,0,0,0.3)",
+letterSpacing: "0.5px",
+transform: "scale(1)",
+userSelect: "none"
+});
+
+document.body.appendChild(counter);
+
+const colorLayer = document.createElement("div");
+Object.assign(colorLayer.style, {
+position: "absolute",
+inset: "0",
+borderRadius: "50%",
+background: 'linear-gradient(135deg, ' + initialColor + 'cc, ' + initialColor + '88)',
+transition: "background 1s cubic-bezier(0.4,0,0.2,1)",
+zIndex: "-1"
+});
+
+counter.style.isolation = "isolate";
+counter.appendChild(colorLayer);
+
+const ring = document.createElement("div");
+ring.style.cssText =
+'position: fixed;' +
+'top: 12px;' +
+'right: 12px;' +
+'width: 56px;' +
+'height: 56px;' +
+'border-radius: 50%;' +
+'background: transparent;' +
+'pointer-events: none;' +
+'z-index: 99998;' +
+'transition: all 0.4s ease;' +
+'border: 2px solid ' + initialColor + ';' +
+'opacity: 0;';
+
+document.body.appendChild(ring);
+
+counter.addEventListener("mouseenter", function() {
+if (counter.dataset.hidden === "true") {
+counter.textContent = counter.dataset.count || "0";
+}
+counter.style.transform = "scale(1.06)";
+ring.style.opacity = "1";
+ring.style.borderColor = COLORS[colorIndex];
+ring.style.boxShadow = '0 0 30px ' + COLORS[colorIndex] + '44';
+});
+
+counter.addEventListener("mouseleave", function() {
+if (counter.dataset.hidden === "true") {
+counter.textContent = "";
+}
+counter.style.transform = "scale(1)";
+ring.style.opacity = "0";
+ring.style.borderColor = "transparent";
+ring.style.boxShadow = "none";
+});
+
+function applySettings() {
+if (typeof settings.counterHidden === "undefined") {
+settings.counterHidden = false;
+}
+if (settings.counterHidden) {
+counter.textContent = "";
+counter.dataset.hidden = "true";
+} else {
+counter.textContent = counter.dataset.count || "0";
+counter.dataset.hidden = "false";
+}
+injectStyles();
+}
+
+applySettings();
+
+function cycleColor() {
+colorIndex = (colorIndex + 1) % COLORS.length;
+var color = COLORS[colorIndex];
+
+counter.style.background = 'linear-gradient(135deg, ' + color + 'cc, ' + color + '88)';
+counter.style.borderColor = color + '66';
+ring.style.borderColor = color;
+colorLayer.style.background = 'linear-gradient(135deg, ' + color + 'cc, ' + color + '88)';
+counter.style.boxShadow = '0 8px 32px ' + color + '33, 0 2px 8px rgba(0,0,0,0.06)';
+
+var modal = document.getElementById("case-modal");
+if (modal) {
+var title = modal.querySelector(".modal-title");
+var totalCases = modal.querySelector(".total-cases");
+if (totalCases) totalCases.style.color = color;
+
+var btns = modal.querySelectorAll(".modal-btn");
+var frCells = modal.querySelectorAll(".fr-link");
+var progressFills = modal.querySelectorAll(".progress-fill");
+var dateHeaders = modal.querySelectorAll(".date-header-bg");
+if (title) {
+title.style.background = 'linear-gradient(135deg, ' + color + ', ' + color + 'cc)';
+title.style.webkitBackgroundClip = "text";
+title.style.webkitTextFillColor = "transparent";
+}
+dateHeaders.forEach(function(h) {
+h.style.background = 'linear-gradient(135deg, ' + color + ', ' + color + 'dd)';
+});
+btns.forEach(function(b) {
+if (b.classList.contains("primary")) {
+b.style.background = color;
+b.style.color = "#fff";
+b.style.boxShadow = '0 6px 20px ' + color + '44';
+}
+});
+frCells.forEach(function(a) { a.style.color = color; });
+progressFills.forEach(function(p) {
+p.style.background = 'linear-gradient(90deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65))';
+});
+}
+setTimeout(cycleColor, CYCLE_DURATION);
+}
+
+setTimeout(cycleColor, CYCLE_DURATION);
+
+function updateCounter() {
+try {
+const h = load();
+const d = today();
+let count = 0;
+if (h[d] && Array.isArray(h[d])) {
+count = h[d].length;
+}
+counter.dataset.count = count;
+counter.title = 'Cases today';
+if (!settings.counterHidden) {
+counter.textContent = count;
+}
+var modal = document.getElementById("case-modal");
+if (modal) {
+var totalSpan = modal.querySelector('.total-cases');
+if (totalSpan) {
+totalSpan.textContent = getTotal();
+}
+}
+} catch (e) {
+console.error('Error updating counter:', e);
+}
+}
+
+updateCounter();
+counter.onclick = openModal;
+
+// ─── Tooltip ──────────────────────────────────────────────
+function showTooltip(el, msg) {
+var t = document.createElement("div");
+t.textContent = msg;
+Object.assign(t.style, {
+position: "fixed",
+background: settings.darkMode ? "#1F232B" : "#111827",
+color: "#fff",
+padding: "6px 14px",
+borderRadius: "10px",
+fontSize: "12px",
+fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
+fontWeight: "500",
+zIndex: 9999999,
+pointerEvents: "none",
+boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+opacity: "0",
+transform: "translateY(8px)",
+transition: "all 0.25s ease"
+});
+document.body.appendChild(t);
+
+var r = el.getBoundingClientRect();
+t.style.left = (r.left + r.width/2 - 30) + "px";
+t.style.top = (r.top - 40) + "px";
+
+requestAnimationFrame(function() {
+t.style.opacity = "1";
+t.style.transform = "translateY(0)";
+});
+
+setTimeout(function() {
+t.style.opacity = "0";
+t.style.transform = "translateY(8px)";
+setTimeout(function() { t.remove(); }, 300);
+}, 1200);
+}
+
+function copyText(text, el, showMessage = true) {
+    navigator.clipboard.writeText(text).then(function() {
+        if(showMessage){
+            showTooltip(el, "✅ تم نسخ رقم الطلب والتعليق");
+        }
+    }).catch(function() {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+
+        if(showMessage){
+            showTooltip(el, "✅ تم نسخ رقم الطلب والتعليق");
+        }
+    });
+}
+
+function showToast(message) {
+var toast = document.createElement('div');
+Object.assign(toast.style, {
+position: 'fixed',
+top: '20px',
+left: '50%',
+transform: 'translateX(-50%) translateY(-20px)',
+background: settings.darkMode ? '#1F232B' : '#FFFFFF',
+color: settings.darkMode ? '#F3F5F8' : '#111827',
+padding: '12px 24px',
+borderRadius: '14px',
+boxShadow: '0 12px 40px rgba(0,0,0,0.2), 0 2px 8px rgba(0,0,0,0.06)',
+border: '1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0'),
+fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
+fontSize: '14px',
+fontWeight: '500',
+zIndex: 9999999,
+opacity: '0',
+transition: 'all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)',
+pointerEvents: 'none',
+backdropFilter: 'blur(12px)',
+WebkitBackdropFilter: 'blur(12px)',
+});
+toast.textContent = message;
+document.body.appendChild(toast);
+requestAnimationFrame(function() {
+toast.style.opacity = '1';
+toast.style.transform = 'translateX(-50%) translateY(0)';
+});
+setTimeout(function() {
+toast.style.opacity = '0';
+toast.style.transform = 'translateX(-50%) translateY(-20px)';
+setTimeout(function() { toast.remove(); }, 400);
+}, 2500);
+}
+
+// ─── Import/Export Functions ─────────────────────────────
+function exportAllData() {
+var data = load();
+var json = JSON.stringify(data, null, 2);
+var blob = new Blob([json], { type: 'application/json' });
+var url = URL.createObjectURL(blob);
+var a = document.createElement('a');
+a.href = url;
+a.download = 'cases_backup_' + today() + '.json';
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+URL.revokeObjectURL(url);
+showToast('📦 Data exported successfully! (' + getTotal() + ' records)');
+}
+
+function importAllData() {
+var input = document.createElement('input');
+input.type = 'file';
+input.accept = '.json';
+input.onchange = function(e) {
+var file = e.target.files[0];
+if (!file) return;
+var reader = new FileReader();
+reader.onload = function(event) {
+try {
+var importedData = JSON.parse(event.target.result);
+if (typeof importedData !== 'object' || importedData === null) {
+showToast('❌ Invalid data format: Not an object');
+return;
+}
+var currentData = load();
+var merged = false;
+var totalImported = 0;
+Object.keys(importedData).forEach(function(date) {
+if (Array.isArray(importedData[date])) {
+if (!currentData[date] || !Array.isArray(currentData[date])) {
+currentData[date] = [];
+}
+importedData[date].forEach(function(item) {
+if (item && typeof item === 'object' && item.fr && item.text) {
+var exists = false;
+for (var i = 0; i < currentData[date].length; i++) {
+if (currentData[date][i].fr === item.fr && currentData[date][i].text === item.text) {
+exists = true;
+break;
+}
+}
+if (!exists) {
+currentData[date].push({ fr: item.fr, text: item.text });
+merged = true;
+totalImported++;
+}
+}
+});
+}
+});
+if (merged) {
+save(currentData);
+updateCounter();
+showToast('✅ Imported ' + totalImported + ' new records successfully!');
+if (currentModal) {
+currentModal.remove();
+openModal();
+}
+} else {
+showToast('ℹ️ No new data to import (0 records added)');
+}
+} catch (err) {
+showToast('❌ Error importing data: ' + err.message);
+}
+};
+reader.readAsText(file);
+document.body.removeChild(input);
+};
+document.body.appendChild(input);
+input.click();
+}
+
+// ─── Modal ──────────────────────────────────────────────
+function openModal() {
+document.getElementById("case-modal")?.remove();
+
+currentAllData = flatten();
+currentFilteredData = currentAllData.slice();
+
+currentOverlay = document.createElement("div");
+currentOverlay.id = "case-modal";
+Object.assign(currentOverlay.style, {
+position: "fixed",
+inset: 0,
+background: "rgba(0,0,0,0.5)",
+backdropFilter: "blur(4px)",
+WebkitBackdropFilter: "blur(4px)",
+display: "flex",
+alignItems: "center",
+justifyContent: "center",
+zIndex: 100000,
+animation: "fadeIn .3s ease"
+});
+
+currentModal = document.createElement("div");
+currentModal.onclick = function(e) { e.stopPropagation(); };
+Object.assign(currentModal.style, {
+background: settings.darkMode ? "#171A21" : "#FFFFFF",
+color: settings.darkMode ? "#F3F5F8" : "#111827",
+width: "96%",
+maxWidth: "1140px",
+maxHeight: "92vh",
+borderRadius: "20px",
+padding: "0",
+display: "flex",
+flexDirection: "column",
+boxShadow: "0 24px 64px rgba(0,0,0,0.2), 0 2px 12px rgba(0,0,0,0.04)",
+border: settings.darkMode ? "1px solid #2A2F3A" : "1px solid #E6EAF0",
+overflow: "hidden",
+animation: "zoomIn .3s cubic-bezier(0.2, 0.8, 0.2, 1)",
+backgroundImage: settings.darkMode
+? "radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px)"
+: "radial-gradient(rgba(0,0,0,0.03) 1px, transparent 1px)",
+backgroundSize: "18px 18px"
+});
+currentOverlay.appendChild(currentModal);
+document.body.appendChild(currentOverlay);
+
+currentOverlay.onclick = function() {
+currentModal.style.animation = "zoomOut .25s ease forwards";
+currentOverlay.style.transition = "opacity 0.25s ease";
+currentOverlay.style.opacity = "0";
+currentOverlay.addEventListener("transitionend", function() {
+currentOverlay.remove();
+currentModal = null;
+currentOverlay = null;
+}, { once: true });
+};
+
+var totalCases = getTotal();
+var currentColor = COLORS[colorIndex];
+
+function createFeedbackPopup(modalElement) {
+    document.querySelector("#feedbackPopup")?.remove();
+
+    const popup = document.createElement("div");
+    popup.id = "feedbackPopup";
+    popup.style.position = "fixed";
+    popup.style.top = "50%";
+    popup.style.left = "50%";
+    popup.style.transform = "translate(-50%, -50%)";
+    popup.style.width = "340px";
+    popup.style.maxWidth = "90vw";
+    popup.style.background = settings.darkMode ? '#1F232B' : '#FFFFFF';
+    popup.style.color = settings.darkMode ? '#F3F5F8' : '#111827';
+    popup.style.borderRadius = "16px";
+    popup.style.boxShadow = "0 20px 60px rgba(0,0,0,0.3), 0 2px 12px rgba(0,0,0,0.06)";
+    popup.style.padding = "24px";
+    popup.style.zIndex = "1000001";
+    popup.style.fontFamily = "'Inter','Segoe UI',system-ui,sans-serif";
+    popup.style.display = "flex";
+    popup.style.flexDirection = "column";
+    popup.style.gap = "14px";
+    popup.style.border = settings.darkMode ? '1px solid #2A2F3A' : '1px solid #E6EAF0';
+    popup.style.backdropFilter = "blur(12px)";
+    popup.style.WebkitBackdropFilter = "blur(12px)";
+    popup.style.animation = "fadeIn 0.25s ease";
+
+    const overlay = document.createElement("div");
+    overlay.id = "feedbackOverlay";
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.background = "rgba(0,0,0,0.4)";
+    overlay.style.backdropFilter = "blur(3px)";
+    overlay.style.WebkitBackdropFilter = "blur(3px)";
+    overlay.style.zIndex = "1000000";
+    overlay.style.animation = "fadeIn 0.3s ease";
+    overlay.onclick = function() {
+        popup.remove();
+        overlay.remove();
+    };
+
+    document.body.appendChild(overlay);
+
+    popup.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div id="feedbackTitle" style="
+                font-weight:700;
+                font-size:18px;
+                background:linear-gradient(135deg,${COLORS[colorIndex]},${COLORS[colorIndex]}cc);
+                -webkit-background-clip:text;
+                -webkit-text-fill-color:transparent;
+                background-clip:text;
+            ">
+                Comment / Suggestion
+            </div>
+            <button id="closeFeedback" style="width:30px;height:30px;border-radius:8px;border:1px solid ${settings.darkMode ? '#2A2F3A' : '#E6EAF0'};background:${settings.darkMode ? '#171A21' : '#F8FAFC'};cursor:pointer;">×</button>
+        </div>
+
+        <div style="font-size:13px;font-weight:600;color:${settings.darkMode ? '#D7DCE5' : '#374151'};">Select tools used:</div>
+
+        <div id="toolsList" style="
+            display:grid;
+            grid-template-columns:repeat(2,minmax(0,1fr));
+            gap:10px 14px;
+            font-size:13px;
+            margin-top:4px;
+        ">
+            <label style="display:flex;align-items:center;gap:6px;color:${settings.darkMode ? '#F3F5F8' : '#111827'};font-weight:500;">
+                <input type="checkbox" value="Counter"> Counter
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;color:${settings.darkMode ? '#F3F5F8' : '#111827'};font-weight:500;">
+                <input type="checkbox" value="Snap to case"> Snap
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;color:${settings.darkMode ? '#F3F5F8' : '#111827'};font-weight:500;">
+                <input type="checkbox" value="Calcu"> Calcu
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;color:${settings.darkMode ? '#F3F5F8' : '#111827'};font-weight:500;">
+                <input type="checkbox" value="Guide"> Guide
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;color:${settings.darkMode ? '#F3F5F8' : '#111827'};font-weight:500;">
+                <input type="checkbox" value="DDL"> DDL
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;color:${settings.darkMode ? '#F3F5F8' : '#111827'};font-weight:500;">
+                <input type="checkbox" value="Qcopy"> Qcopy
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;color:${settings.darkMode ? '#F3F5F8' : '#111827'};font-weight:500;">
+                <input type="checkbox" value="Login"> Login
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;color:${settings.darkMode ? '#F3F5F8' : '#111827'};font-weight:500;">
+                <input type="checkbox" value="BOT"> BOT
+            </label>
+        </div>
+
+        <div style="font-size:13px;font-weight:600;color:${settings.darkMode ? '#D7DCE5' : '#374151'};">Rating:</div>
+
+        <div id="stars" style="display:flex;gap:6px;font-size:28px;cursor:pointer;direction:ltr;">
+            <span data-star="1">☆</span>
+            <span data-star="2">☆</span>
+            <span data-star="3">☆</span>
+            <span data-star="4">☆</span>
+            <span data-star="5">☆</span>
+        </div>
+
+        <textarea id="suggestionInput" placeholder="Type your comment..." style="width:100%;height:70px;padding:10px;border-radius:10px;background:${settings.darkMode ? '#171A21' : '#FFFFFF'};color:${settings.darkMode ? '#FFFFFF' : '#111827'};border:1px solid ${settings.darkMode ? '#2A2F3A' : '#E6EAF0'};"></textarea>
+
+        <div style="display:flex;gap:10px;">
+            <button id="feedbackOutlook" style="flex:1;padding:10px;border:none;border-radius:12px;background:${COLORS[colorIndex]};color:white;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600;box-shadow:0 4px 14px ${COLORS[colorIndex]}55;transition:all 0.25s ease;">
+                Outlook
+            </button>
+            <button id="feedbackTeams" style="flex:1;padding:10px;border:none;border-radius:12px;background:${COLORS[colorIndex]};color:white;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600;">
+                Teams
+            </button>
+        </div>
+    `;
+    document.body.appendChild(popup);
+
+    let rating = 0;
+    const stars = popup.querySelectorAll('#stars span');
+    const starsContainer = popup.querySelector('#stars');
+    stars.forEach(star => {
+        star.style.transition = "all 0.15s ease";  
+        star.addEventListener("mouseenter", function () {  
+            const hoverRating = parseInt(this.dataset.star);  
+            stars.forEach((s, i) => {  
+                s.textContent = i < hoverRating ? "★" : "☆";  
+                s.style.color = i < hoverRating ? "#FBBF24" : "#9CA3B0";  
+                s.style.transform = i < hoverRating ? "scale(1.15)" : "scale(1)";  
+            });  
+        });
+        starsContainer.addEventListener("mouseleave", function () {  
+            stars.forEach((s, i) => {  
+                s.textContent = i < rating ? "★" : "☆";  
+                s.style.color = i < rating ? "#FBBF24" : "#9CA3B0";  
+                s.style.transform = "scale(1)";  
+            });
+        });
+    });
+
+    stars.forEach(star => {
+        star.onclick = function() {
+            rating = parseInt(this.dataset.star);
+            stars.forEach((s, i) => {
+                s.textContent = i < rating ? '★' : '☆';
+                s.style.color = i < rating ? '#FBBF24' : '#9CA3B0';
+            });
+        };
+    });
+
+    function closePopup() {
+        popup.remove();
+        overlay.remove();
+    }
+
+    const closeBtn = popup.querySelector('#closeFeedback');
+    if(closeBtn) closeBtn.onclick = closePopup;
+
+    const outlookBtn = popup.querySelector("#feedbackOutlook");
+    if (outlookBtn) outlookBtn.onclick = function() {
+        const selectedTools = Array.from(popup.querySelectorAll('#toolsList input:checked')).map(i => i.value).join(', ') || 'None';
+        const suggestion = popup.querySelector('#suggestionInput').value || 'No suggestion';
+        const email = 'mhasab.c@rer.sa';
+        const subject = encodeURIComponent('Tool Feedback');
+        const body = encodeURIComponent(`Tools: ${selectedTools}\nRating: ${rating}/5\nComment: ${suggestion}`);
+        window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+        closePopup();
+    };
+
+    const teamsBtn = popup.querySelector("#feedbackTeams");
+    if (teamsBtn) teamsBtn.onclick = function() {
+        const selectedTools = Array.from(popup.querySelectorAll('#toolsList input:checked')).map(i => i.value).join(', ') || 'None';
+        const suggestion = popup.querySelector('#suggestionInput').value || 'No suggestion';
+        const body = encodeURIComponent(`Tools: ${selectedTools}\nRating: ${rating}/5\nComment: ${suggestion}`);
+        window.location.href = `msteams:/l/chat/0/0?users=mhasab.c@rer.sa&message=${body}`;
+        closePopup();
+    };
+}
+
+// بناء نافذة العرض والمودال
+currentModal.innerHTML = '' +
+'<div style="padding: 24px 28px 20px 28px; border-bottom: 1px solid ' + (settings.darkMode
+? '0.8px solid rgba(255,255,255,0.06)'
+: '0.8px solid rgba(17,24,39,0.08)') + ';">' +
+'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">' +
+'<div>' +
+'<h2 class="modal-title" style="' +
+'margin:0; font-size:28px; font-weight:800; letter-spacing:-0.5px; font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;' +
+'background: linear-gradient(135deg, ' + currentColor + ', ' + currentColor + 'cc);' +
+'-webkit-background-clip: text;' +
+'-webkit-text-fill-color: transparent;' +
+'background-clip: text;' +
+'">' +
+(document.querySelector(".text-black.font-bold.md\\:text-base.md\\:leading-6")?.textContent.replace("مرحبا", "").replace("!", "").trim() || "Case Report") +
+'</h2>' +
+'<div style="margin-top:4px; display:flex; align-items:center; gap:8px;">' +
+'<span style="font-size:13px; color:' + (settings.darkMode ? '#9BA3B5' : '#6B7280') + '; font-weight:500;">Total Cases</span>' +
+'<span class="total-cases" style="font-size:15px; font-weight:700; color:' + COLORS[colorIndex] + ';">' + totalCases + '</span>' +
+'</div>' +
+'</div>' +
+'<div style="display:flex;align-items:center;gap:6px;direction:rtl;">' +
+'<button id="closeBtn" class="modal-btn" style="width:38px;height:38px;border-radius:12px;border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';background:' + (settings.darkMode ? '#1F232B' : '#F8FAFC') + ';cursor:pointer;font-size:22px;transition:all 0.2s ease;display:flex;align-items:center;justify-content:center;color:' + (settings.darkMode ? '#9BA3B5' : '#6B7280') + ';font-weight:300;">×</button>' +
+'<button id="hideToggle" class="modal-btn" title="Show/Hide Counter" style="width:38px;height:38px;border-radius:12px;border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';background:' + (settings.darkMode ? '#1F232B' : '#F8FAFC') + ';cursor:pointer;font-size:18px;transition:all 0.2s ease;display:flex;align-items:center;justify-content:center;">' + (settings.counterHidden ? '🔓' : '🔒') + '</button>' +
+'<button id="darkToggle" class="modal-btn" title="Dark/Light Mode" style="width:38px;height:38px;border-radius:12px;border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';background:' + (settings.darkMode ? '#1F232B' : '#F8FAFC') + ';cursor:pointer;font-size:18px;transition:all 0.2s ease;display:flex;align-items:center;justify-content:center;">' + (settings.darkMode ? '🌙' : '☀️') + '</button>' +
+'<button id="feedbackBtn" class="modal-btn feedback-btn" title="💡 Comment / Suggestion" style="width:38px;height:38px;border-radius:12px;border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';background:' + (settings.darkMode ? '#1F232B' : '#F8FAFC') + ';cursor:pointer;font-size:18px;transition:all 0.2s ease;display:flex;align-items:center;justify-content:center;">⭐</button>' +
+'</div>' +
+'</div>' +
+'</div>' +
+
+// Toolbar
+'<div style="padding: 12px 28px; border-bottom: 1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + '; background:' + (settings.darkMode ? '#1A1E26' : '#F8FAFC') + ';">' +
+'<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;width:100%;overflow:hidden;">' +
+'<div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">' +
+'<div style="display:flex; align-items:center; gap:6px; background:' + (settings.darkMode ? '#1F232B' : '#FFFFFF') + '; padding:2px 10px 2px 14px; border-radius:12px; border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';">' +
+'<span style="font-size:14px;">📅</span>' +
+'<input type="date" id="from" class="date-input" style="border:none;background:transparent;padding:8px 0;font-size:13px;font-weight:500;color:' + (settings.darkMode ? '#F3F5F8' : '#111827') + ';font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;outline:none;width:120px;">' +
+'</div>' +
+'<span style="font-weight:300;color:' + (settings.darkMode ? '#5A6272' : '#9CA3B0') + ';">→</span>' +
+'<div style="display:flex; align-items:center; gap:6px; background:' + (settings.darkMode ? '#1F232B' : '#FFFFFF') + '; padding:2px 10px 2px 14px; border-radius:12px; border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';">' +
+'<span style="font-size:14px;">📅</span>' +
+'<input type="date" id="to" class="date-input" style="border:none;background:transparent;padding:8px 0;font-size:13px;font-weight:500;color:' + (settings.darkMode ? '#F3F5F8' : '#111827') + ';font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;outline:none;width:120px;">' +
+'</div>' +
+'<button class="btn primary modal-btn" id="todayBtn" style="padding:8px 16px;border-radius:12px;border:none;background:' + currentColor + ';color:#fff;font-weight:600;font-size:12px;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;cursor:pointer;transition:all 0.2s ease;box-shadow:0 4px 16px ' + currentColor + '44;letter-spacing:0.3px;flex-shrink:0;">Today</button>' +
+'</div>' +
+'<div style="flex:1; min-width:8px;"></div>' +
+'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">' +
+'<div style="display:flex; align-items:center; gap:0; position:relative;">' +
+'<input id="searchInput" type="text" placeholder="🔍 Search Cases or Notes..." style="' +
+'padding:6px 32px 6px 12px;' +
+'border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';' +
+'border-radius:10px;' +
+'background:' + (settings.darkMode ? '#1F232B' : '#FFFFFF') + ';' +
+'color:' + (settings.darkMode ? '#F3F5F8' : '#111827') + ';' +
+'font-size:13px;' +
+'font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;' +
+'outline:none;' +
+'width:min(220px,100%);' +
+'min-width:140px;' +
+'height:32px;' +
+'box-sizing:border-box;' +
+'transition:border-color 0.2s ease;' +
+'" onfocus="this.style.borderColor=\'' + currentColor + '\'" onblur="this.style.borderColor=\'' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + '\'">' +
+'</div>' +
+'<button id="exportBtn" class="modal-btn" title="Export Data" style="padding:6px 14px;border-radius:10px;border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';background:' + (settings.darkMode ? '#1F232B' : '#FFFFFF') + ';cursor:pointer;font-size:14px;transition:all 0.2s ease;display:flex;align-items:center;gap:4px;color:' + (settings.darkMode ? '#F3F5F8' : '#111827') + ';font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;font-weight:500;font-size:12px;">' +
+'<span>📦</span> Export' +
+'</button>' +
+'<button id="importBtn" class="modal-btn" title="Import Data" style="padding:6px 14px;border-radius:10px;border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';background:' + (settings.darkMode ? '#1F232B' : '#FFFFFF') + ';cursor:pointer;font-size:14px;transition:all 0.2s ease;display:flex;align-items:center;gap:4px;color:' + (settings.darkMode ? '#F3F5F8' : '#111827') + ';font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;font-weight:500;font-size:12px;">' +
+'<span>📥</span> Import' +
+'</button>' +
+'</div>' +
+'</div>' +
+'</div>' +
+
+// Table area
+'<div style="padding: 16px 28px 20px 28px; flex:1; min-height:0; display:flex; flex-direction:column;">' +
+'<div id="tableWrap" style="flex:1; min-height:0;"></div>' +
+'<div style="display:flex; gap:12px; justify-content:center; margin-top:16px; padding-top:16px; border-top:1px solid ' + (settings.darkMode ? 'rgba(42,47,58,0.35)' : 'rgba(230,234,240,0.7)') + ';">' +
+'<button class="btn primary modal-btn" id="csv" style="padding:10px 24px;border-radius:14px;border:none;background:' + currentColor + ';color:#fff;font-weight:600;font-size:13px;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;cursor:pointer;transition:all 0.2s ease;box-shadow:0 4px 16px ' + currentColor + '44;display:flex;align-items:center;gap:6px;">⬇ Excel Report</button>' +
+'<button class="btn primary modal-btn" id="html" style="padding:10px 24px;border-radius:14px;border:none;background:' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';color:' + (settings.darkMode ? '#F3F5F8' : '#111827') + ';font-weight:600;font-size:13px;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;cursor:pointer;transition:all 0.2s ease;display:flex;align-items:center;gap:6px;">⬇ HTML Report</button>' +
+'</div>' +
+'</div>';
+
+currentModal.querySelector("#feedbackBtn").onclick = function(e) {
+    e.stopPropagation();
+    createFeedbackPopup(currentModal);
+};
+
+currentModal.querySelector("#closeBtn").onclick = function() {
+    currentModal.style.animation = "zoomOut .25s ease forwards";
+    currentOverlay.style.transition = "opacity 0.25s ease";
+    currentOverlay.style.opacity = "0";
+    setTimeout(function() {
+        currentOverlay.remove();
+        currentModal = null;
+        currentOverlay = null;
+    }, 250);
+};
+
+var darkBtn = currentModal.querySelector("#darkToggle");
+darkBtn.onclick = function() {
+    settings.darkMode = !settings.darkMode;
+    saveSettings();
+    injectStyles();
+    darkBtn.textContent = settings.darkMode ? '🌙' : '☀️';
+    applyDarkModeToModal(currentModal);
+    renderTable();
+};
+
+var hideBtn = currentModal.querySelector("#hideToggle");
+hideBtn.onclick = function() {
+    settings.counterHidden = !settings.counterHidden;
+    saveSettings();
+    applySettings();
+    hideBtn.textContent = settings.counterHidden ? '🔓' : '🔒';
+    if (!settings.counterHidden) {
+        counter.textContent = counter.dataset.count || "0";
+    } else {
+        counter.textContent = "";
+    }
+};
+
+var searchInput = currentModal.querySelector("#searchInput");
+if (searchQuery) {
+    searchInput.value = searchQuery;
+    isSearchActive = true;
+}
+
+function performSearch() {
+    var query = searchInput.value.trim().toLowerCase();
+    searchQuery = query;
+    isSearchActive = query.length > 0;
+    applyDateFilter();
+}
+
+searchInput.addEventListener("input", performSearch);
+
+currentModal.querySelector("#exportBtn").onclick = function() { exportAllData(); };
+currentModal.querySelector("#importBtn").onclick = function() { importAllData(); };
+
+var tableWrap = currentModal.querySelector("#tableWrap");
+
+function renderTable() {
+    var dataToShow = currentFilteredData;
+
+    if (!dataToShow || !dataToShow.length) {
+        tableWrap.innerHTML = '' +
+        '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:' + (settings.darkMode ? '#5A6272' : '#9CA3B0') + ';font-size:15px;font-weight:500;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">' +
+        (isSearchActive ? '🔍 No results found for "' + searchQuery + '"' : 'No records found') +
+        '</div>';
+        return;
+    }
+
+    var grouped = {};
+    dataToShow.forEach(function(r) {
+        if (!grouped[r.date]) grouped[r.date] = [];
+        grouped[r.date].push(r);
+    });
+
+    var dateHeaders = Object.keys(grouped).sort().reverse();
+
+    var tableHTML = '' +
+    '<div style="border-radius:16px;overflow:hidden;border:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';background:' + (settings.darkMode ? '#171A21' : '#FFFFFF') + ';">' +
+    '<div style="max-height:50vh;overflow:auto;">' +
+    '<table style="width:100%;border-collapse:collapse;font-size:14px;font-family:\'Inter\',\'Segoe UI\',system-ui,sans-serif;">';
+
+    for (var d = 0; d < dateHeaders.length; d++) {
+        var date = dateHeaders[d];
+        var showProgress = !isSearchActive;
+
+        tableHTML += '' +
+        '<thead class="date-header">' +
+        '<tr>' +
+        '<th class="date-header-bg" colspan="3" style="background:linear-gradient(135deg, ' + COLORS[colorIndex] + ', ' + COLORS[colorIndex] + 'dd);color:#fff;padding:0;border:none;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;">' +
+        '<span style="font-weight:700;font-size:15px;letter-spacing:0.3px;color:rgba(255,255,255,0.95);">📅 ' + date + '</span>';
+
+        if (showProgress) {
+            var progressPercent = (grouped[date].length / 30) * 100;
+            tableHTML += '' +
+            '<div style="display:flex;align-items:center;gap:12px;flex:1;margin:0 16px;">' +
+            '<div style="flex:1;height:6px;background:rgba(255,255,255,0.25);border-radius:4px;overflow:hidden;">' +
+            '<div class="progress-fill" style="width:' + progressPercent + '%;height:100%;border-radius:4px;background:linear-gradient(90deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65));transition:width 0.3s ease;box-shadow:0 0 8px rgba(255,255,255,0.25);"></div>' +
+            '</div>' +
+            '<span style="font-size:12px;font-weight:600;opacity:0.9;min-width:40px;text-align:right;color:rgba(255,255,255,0.9);">' + progressPercent.toFixed(0) + '%</span>' +
+            '</div>';
+        } else {
+            tableHTML += '<div style="flex:1;margin:0 16px;"></div>';
+        }
+
+        tableHTML += '' +
+        '<span style="font-size:13px;font-weight:700;opacity:0.9;background:rgba(255,255,255,0.15);padding:4px 14px;border-radius:20px;color:rgba(255,255,255,0.95);">' + grouped[date].length + ' cases</span>' +
+        '</div>' +
+        '</th>' +
+        '</tr>' +
+        '<tr style="background:' + (settings.darkMode ? '#1F232B' : '#F8FAFC') + ';">' +
+        '<th style="width:60px;padding:10px 12px;text-align:center;font-weight:600;font-size:12px;color:' + (settings.darkMode ? '#9BA3B5' : '#6B7280') + ';border-bottom:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';text-transform:uppercase;letter-spacing:0.5px;">#</th>' +
+        '<th style="width:130px;padding:10px 12px;text-align:center;font-weight:600;font-size:12px;color:' + (settings.darkMode ? '#9BA3B5' : '#6B7280') + ';border-bottom:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';text-transform:uppercase;letter-spacing:0.5px;">Case ID</th>' +
+        '<th style="padding:10px 12px;text-align:center;font-weight:600;font-size:12px;color:' + (settings.darkMode ? '#9BA3B5' : '#6B7280') + ';border-bottom:1px solid ' + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + ';text-transform:uppercase;letter-spacing:0.5px;">Case Notes</th>' +
+        '</tr>' +
+        '</thead>' +
+        '<tbody>';
+
+        for (var r = 0; r < grouped[date].length; r++) {
+            var row = grouped[date][r];
+            var isLast = r === grouped[date].length - 1;
+            tableHTML += '' +
+            '<tr style="border-bottom:1px solid ' + (settings.darkMode ? '#1F232B' : '#F1F3F6') + ';' + (isLast ? 'border-bottom:none;' : '') + 'transition:background 0.15s ease;">' +
+            '<td style="padding:10px 12px;text-align:center;font-weight:500;color:' + (settings.darkMode ? '#9BA3B5' : '#6B7280') + ';">' + row.idx + '</td>' +
+            '<td style="padding:10px 12px;text-align:center;">' +
+            '<a href="https://ops.rer.sa/case-view?caseId=' + encodeURIComponent(row.fr) + '" target="_blank" rel="noopener" class="fr-link" style="color:' + COLORS[colorIndex] + ';font-weight:700;text-decoration:none;transition:all 0.15s ease;cursor:pointer;font-size:14px;">' + row.fr + '</a>' +
+            '</td>' +
+            '<td class="copyable" style="padding:10px 12px;text-align:right;direction:rtl;line-height:1.6;color:' + (settings.darkMode ? '#D1D5DB' : '#374151') + ';cursor:pointer;transition:background 0.15s ease;" title="اضغط لنسخ التوصية">' + row.text + '</td>' +
+            '</tr>';
+        }
+        tableHTML += '</tbody>';
+    }
+
+    tableHTML += '</table></div></div>';
+    tableWrap.innerHTML = tableHTML;
+
+    tableWrap.querySelectorAll("tbody tr").forEach(function(row) {
+        row.addEventListener("mouseenter", function() {
+            row.style.background = settings.darkMode ? "#1F232B" : "#F1F3F6";
+        });
+        row.addEventListener("mouseleave", function() {
+            row.style.background = "transparent";
+        });
+    });
+
+    tableWrap.querySelectorAll(".fr-link").forEach(function(link) {
+        link.addEventListener("mouseenter", function() {
+            link.style.textDecoration = "underline";
+            link.style.opacity = "0.85";
+        });
+        link.addEventListener("mouseleave", function() {
+            link.style.textDecoration = "none";
+            link.style.opacity = "1";
+        });
+    });
+
+    tableWrap.querySelectorAll(".copyable").forEach(function(td) {
+        td.addEventListener("click", function() {
+            const row = td.closest("tr");
+            const frNumber = row?.querySelector("td:nth-child(2)")?.textContent.trim() || "";
+            const comment = td.textContent.trim();
+            copyText(frNumber, td, false);
+            setTimeout(function(){
+                copyText(comment, td, true);
+            },400);
+        });
+        td.addEventListener("mouseenter", function() {
+            td.style.background = settings.darkMode ? "#1F232B" : "#F5F7FA";
+        });
+        td.addEventListener("mouseleave", function() {
+            td.style.background = "transparent";
+        });
+    });
+}
+
+// ─── Filters ─────────────────────────────────────────────
+var fromDate = currentModal.querySelector("#from");
+var toDate = currentModal.querySelector("#to");
+var todayBtn = currentModal.querySelector("#todayBtn");
+
+function applyDateFilter() {
+    currentAllData = flatten();
+    var f = fromDate.value;
+    var t = toDate.value;
+    var hasSearch = isSearchActive && searchQuery;
+
+    var filtered = [];
+
+    if (hasSearch) {
+        filtered = currentAllData.filter(function(r) {
+            return r.fr.toLowerCase().includes(searchQuery) ||
+                r.text.toLowerCase().includes(searchQuery);
+        });
+    } else if (f || t) {
+        filtered = currentAllData.slice();
+        if (f && t) {
+            filtered = filtered.filter(function(r) {
+                return r.date >= f && r.date <= t;
+            });
+        } else if (f) {
+            filtered = filtered.filter(function(r) {
+                return r.date >= f;
+            });
+        } else if (t) {
+            filtered = filtered.filter(function(r) {
+                return r.date <= t;
+            });
+        }
+    } else {
+        filtered = currentAllData.slice();
+    }
+
+    currentFilteredData = filtered;
+    renderTable();
+}
+
+function addClearButtonToSearch() {
+    if (!searchInput) return;
+    var wrapper = searchInput.parentElement;
+    if (!wrapper) return;
+    if (wrapper.querySelector('.search-clear-btn')) return;
+    
+    var clearBtn = document.createElement('button');
+    clearBtn.className = 'search-clear-btn';
+    clearBtn.textContent = '✕';
+    Object.assign(clearBtn.style, {
+        position: 'absolute',
+        right: '8px',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        background: 'transparent',
+        border: 'none',
+        color: settings.darkMode ? '#9BA3B5' : '#6B7280',
+        cursor: 'pointer',
+        fontSize: '14px',
+        padding: '4px 6px',
+        borderRadius: '50%',
+        display: searchInput.value ? 'block' : 'none',
+        zIndex: '10',
+        transition: 'all 0.2s ease'
+    });
+    
+    clearBtn.addEventListener('mouseenter', function() {
+        this.style.color = settings.darkMode ? '#FFFFFF' : '#111827';
+        this.style.background = settings.darkMode ? '#2A2F3A' : '#E6EAF0';
+    });
+    
+    clearBtn.addEventListener('mouseleave', function() {
+        this.style.color = settings.darkMode ? '#9BA3B5' : '#6B7280';
+        this.style.background = 'transparent';
+    });
+    
+    clearBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        searchInput.value = '';
+        searchQuery = '';
+        isSearchActive = false;
+        this.style.display = 'none';
+        applyDateFilter();
+        searchInput.focus();
+    });
+    
+    searchInput.addEventListener('input', function() {
+        if (clearBtn) clearBtn.style.display = this.value ? 'block' : 'none';
+    });
+    
+    wrapper.style.position = 'relative';
+    wrapper.appendChild(clearBtn);
+}
+
+fromDate.addEventListener("change", function() {
+    toDate.value = fromDate.value;
+    if (searchInput) {
+        searchInput.value = '';
+        searchQuery = '';
+        isSearchActive = false;
+        var cb = currentModal.querySelector('.search-clear-btn');
+        if (cb) cb.style.display = 'none';
+    }
+    applyDateFilter();
+});
+
+toDate.addEventListener("change", function() {
+    if (searchInput) {
+        searchInput.value = '';
+        searchQuery = '';
+        isSearchActive = false;
+        var cb = currentModal.querySelector('.search-clear-btn');
+        if (cb) cb.style.display = 'none';
+    }
+    applyDateFilter();
+});
+
+todayBtn.addEventListener("click", function() {
+    var d = today();
+    fromDate.value = d;
+    toDate.value = d;
+    if (searchInput) {
+        searchInput.value = '';
+        searchQuery = '';
+        isSearchActive = false;
+        var cb = currentModal.querySelector('.search-clear-btn');
+        if (cb) cb.style.display = 'none';
+    }
+    applyDateFilter();
+});
+
+(function initializeFilters() {
+    var d = today();
+    fromDate.value = d;
+    toDate.value = d;
+    applyDateFilter();
+})();
+
+setTimeout(function() {
+    addClearButtonToSearch();
+}, 100);
+
+currentModal.querySelector("#csv").onclick = function() {
+    loadXLSX().then(function() {
+        exportExcel(currentFilteredData);
+    }).catch(function() {
+        showToast('⚠️ XLSX library not available. Using CSV export.');
+        exportCSV(currentFilteredData);
+    });
+};
+currentModal.querySelector("#html").onclick = function() { exportHTML(currentFilteredData); };
+}
+
+// ─── Dark Mode Apply ──────────────────────────────────────
+function applyDarkModeToModal(modal) {
+    if (!modal) return;
+    const isDark = settings.darkMode;
+    modal.style.background = isDark ? '#171A21' : '#FFFFFF';
+    modal.style.color = isDark ? '#F3F5F8' : '#111827';
+    modal.style.border = isDark ? '1px solid #2A2F3A' : '1px solid #E6EAF0';
+    modal.style.backgroundImage = isDark
+        ? 'radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px)'
+        : 'radial-gradient(rgba(0,0,0,0.03) 1px, transparent 1px)';
+
+    var toolbar = modal.querySelector('[style*="padding: 12px 28px;"]');
+    if (toolbar) {
+        toolbar.style.background = isDark ? '#171a21' : '#F8FAFC';
+        toolbar.style.borderBottom = 'none';
+    }
+
+    modal.querySelectorAll('.date-input').forEach(el => {
+        el.style.color = isDark ? '#F3F5F8' : '#111827';
+        el.style.background = isDark ? '#1F232B' : '#FFFFFF';
+    });
+
+    var searchInput = modal.querySelector('#searchInput');
+    if (searchInput) {
+        searchInput.style.background = isDark ? '#1F232B' : '#FFFFFF';
+        searchInput.style.color = isDark ? '#F3F5F8' : '#111827';
+        searchInput.style.border = isDark ? '1px solid #2A2F3A' : '1px solid #E6EAF0';
+    }
+
+    var clearBtn = modal.querySelector('.search-clear-btn');
+    if (clearBtn) clearBtn.style.color = isDark ? '#9BA3B5' : '#6B7280';
+
+    var feedbackBtn = modal.querySelector("#feedbackBtn");
+    if (feedbackBtn) {
+        feedbackBtn.style.background = isDark ? '#1F232B' : '#F8FAFC';
+        feedbackBtn.style.border = isDark ? '1px solid #2A2F3A' : '1px solid #E6EAF0';
+        feedbackBtn.style.color = isDark ? '#F3F5F8' : '#111827';
+    }
+
+    modal.querySelectorAll('.modal-btn').forEach(el => {
+        if (!el.classList.contains('primary')) {
+            el.style.border = isDark ? '1px solid #2A2F3A' : '1px solid #E6EAF0';
+            el.style.background = isDark ? '#1F232B' : '#FFFFFF';
+            el.style.color = isDark ? '#F3F5F8' : '#111827';
+        }
+    });
+}
+
+// ─── CSV Export ──────────────────────────────────────────
+function exportCSV(rows) {
+    if (!rows || !rows.length) {
+        showToast('No data to export');
+        return;
+    }
+
+    var fromDate = document.querySelector("#from")?.value;
+    var toDate = document.querySelector("#to")?.value;
+    var isSearch = isSearchActive && searchQuery;
+
+    var fileName = "cases";
+    if (isSearch) {
+        fileName = "search-results";
+    } else if (fromDate && toDate) {
+        fileName = fromDate === toDate ? "cases-" + fromDate : "cases-" + fromDate + "_" + toDate;
+    } else if (fromDate) {
+        fileName = "cases-" + fromDate;
+    } else if (toDate) {
+        fileName = "cases-" + toDate;
+    }
+
+    var grouped = {};
+    rows.forEach(function(r) {
+        if (!grouped[r.date]) grouped[r.date] = [];
+        grouped[r.date].push(r);
+    });
+
+    var csvRows = [];
+    var dates = Object.keys(grouped).sort().reverse();
+
+    for (var d = 0; d < dates.length; d++) {
+        var date = dates[d];
+        csvRows.push('"' + date + ' | Total: ' + grouped[date].length + '"');
+        csvRows.push('"#","Case ID","Case Notes"');
+        for (var r = 0; r < grouped[date].length; r++) {
+            var row = grouped[date][r];
+            var text = row.text.replace(/"/g, '""');
+            csvRows.push('"' + row.idx + '","' + row.fr + '","' + text + '"');
+        }
+        csvRows.push('');
+    }
+
+    var csvString = csvRows.join('\n');
+    var blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName + '.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+    showToast('✅ CSV exported successfully!');
+}
+
+// ─── Styles ──────────────────────────────────────────────
+function injectStyles() {
+    if (document.getElementById("case-styles")) {
+        document.getElementById("case-styles").remove();
+    }
+
+    var s = document.createElement("style");
+    s.id = "case-styles";
+    s.textContent = '' +
+    "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');" +
+    "@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }" +
+    "@keyframes zoomIn { from { transform: scale(0.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }" +
+    "@keyframes zoomOut { from { transform: scale(1); opacity: 1; } to { transform: scale(0.96); opacity: 0; } }" +
+    "#case-modal { --bg: " + (settings.darkMode ? '#171A21' : '#FFFFFF') + "; --text: " + (settings.darkMode ? '#F3F5F8' : '#111827') + "; --muted: " + (settings.darkMode ? '#5A6272' : '#9CA3B0') + "; --card: " + (settings.darkMode ? '#1A1E26' : '#F8FAFC') + "; --border: " + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + "; --hover: " + (settings.darkMode ? '#1F232B' : '#F1F3F6') + "; }" +
+    "#case-modal { border: 1px solid " + (settings.darkMode ? '#2A2F3A' : '#E6EAF0') + "; box-shadow: 0 24px 64px rgba(0,0,0,0.2), 0 2px 12px rgba(0,0,0,0.04); }" +
+    "#case-modal .modal-btn { transition: all 0.2s ease; }" +
+    "#case-modal .modal-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }" +
+    "#case-modal .modal-btn:active { transform: translateY(0px); }" +
+    "#case-modal .btn.primary { transition: all 0.2s ease; position: relative; overflow: hidden; }" +
+    "#case-modal .btn.primary:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }" +
+    "#case-modal .btn.primary:active { transform: translateY(0px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }" +
+    "#case-modal .date-input { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; }" +
+    (settings.darkMode ?
+        "#case-modal .date-input { color-scheme: dark; }" :
+        "#case-modal .date-input { color-scheme: light; }") +
+    (settings.darkMode ?
+        "#case-modal .date-input::-webkit-calendar-picker-indicator { opacity: 1; cursor: pointer; filter: invert(1) brightness(2); }" +
+        "#case-modal .date-input { background: #1F232B !important; color: #F3F5F8 !important; border-color: #2A2F3A !important; }" +
+        "#case-modal .date-input:focus { border-color: " + COLORS[colorIndex] + " !important; }" :
+        "#case-modal .date-input::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; }") +
+    "#case-modal .case-table { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; }" +
+    "#case-modal ::-webkit-scrollbar { width: 6px; height: 6px; }" +
+    "#case-modal ::-webkit-scrollbar-track { background: transparent; }" +
+    "#case-modal ::-webkit-scrollbar-thumb { background: " + (settings.darkMode ? '#2A2F3A' : '#D1D5DB') + "; border-radius: 4px; }" +
+    "#case-modal ::-webkit-scrollbar-thumb:hover { background: " + (settings.darkMode ? '#3A3F4A' : '#B0B8C4') + "; }" +
+    ".copyable { position: relative; }" +
+    ".copyable::after { content: ' '; position: absolute; left: 12px; top: 50%; transform: translateY(-50%); opacity: 0; transition: opacity 0.2s ease; font-size: 14px; }" +
+    ".copyable:hover::after { opacity: 0.4; }" +
+    '';
+
+    document.head.appendChild(s);
+}
+
+// ─── Exports ──────────────────────────────────────────────
+function exportExcel(rows) {
+    if (!rows || !rows.length) {
+        showToast('No data to export');
+        return;
+    }
+    var userName = document.querySelector(".text-black.font-bold.md\\:text-base.md\\:leading-6")
+        ?.textContent
+        .replace("مرحبا", "")
+        .replace("!", "")
+        .trim() || "Unknown User";
+
+    var fromDate = document.querySelector("#from")?.value;
+    var toDate = document.querySelector("#to")?.value;
+    var isSearch = isSearchActive && searchQuery;
+
+    var fileName = "cases";
+    if (isSearch) {
+        fileName = "search-results";
+    } else if (fromDate && toDate) {
+        fileName = fromDate === toDate ? "cases-" + fromDate : "cases-" + fromDate + "_" + toDate;
+    } else if (fromDate) {
+        fileName = "cases-" + fromDate;
+    } else if (toDate) {
+        fileName = "cases-" + toDate;
+    }
+
+    var grouped = {};
+    rows.forEach(function(r) {
+        if (!grouped[r.date]) grouped[r.date] = [];
+        grouped[r.date].push(r);
+    });
+
+    var wb = XLSX.utils.book_new();
+    var ws_data = [];
+
+    ws_data.push([userName, ""]);
+    ws_data.push([]);
+
+    var dates = Object.keys(grouped).sort().reverse();
+    for (var d = 0; d < dates.length; d++) {
+        var date = dates[d];
+        ws_data.push([date + " | Total: " + grouped[date].length]);
+        ws_data.push(["#", "Case ID", "Case Notes"]);
+        for (var r = 0; r < grouped[date].length; r++) {
+            var row = grouped[date][r];
+            ws_data.push([row.idx, row.fr, row.text]);
+        }
+        ws_data.push([]);
+    }
+
+    var ws = XLSX.utils.aoa_to_sheet(ws_data);
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
+    var themeRGB = COLORS[colorIndex].replace("#", "").toUpperCase();
+    var range = XLSX.utils.decode_range(ws['!ref']);
+
+    for (var R = range.s.r; R <= range.e.r; ++R) {
+        for (var c = 0; c < 3; c++) {
+            var cellAddr = XLSX.utils.encode_cell({ r: R, c: c });
+            if (!ws[cellAddr]) ws[cellAddr] = { t: "s", v: "" };
+            ws[cellAddr].s ||= {};
+        }
+        var cellA = ws[XLSX.utils.encode_cell({ r: R, c: 0 })];
+        if (typeof cellA.v === "string" && cellA.v.indexOf("Total:") !== -1) {
+            for (var c2 = 0; c2 < 3; c2++) {
+                var addr = XLSX.utils.encode_cell({ r: R, c: c2 });
+                ws[addr].s = {
+                    font: { bold: true, color: { rgb: "FFFFFF" } },
+                    fill: { fgColor: { rgb: themeRGB } },
+                    alignment: { horizontal: "left" }
+                };
+            }
+            if (!ws['!merges']) ws['!merges'] = [];
+            ws['!merges'].push({ s: { r: R, c: 0 }, e: { r: R, c: 2 } });
+        }
+        if (cellA.v === "#" && (ws[XLSX.utils.encode_cell({ r: R, c: 1 })]?.v === "FR" || ws[XLSX.utils.encode_cell({ r: R, c: 1 })]?.v === "Case ID")) {
+            for (var c3 = 0; c3 < 3; c3++) {
+                var addr2 = XLSX.utils.encode_cell({ r: R, c: c3 });
+                ws[addr2].s = {
+                    font: { bold: true, color: { rgb: "333333" } },
+                    fill: { fgColor: { rgb: "F6F6F6" } },
+                    alignment: { horizontal: "center" },
+                    border: {
+                        top: { style: "thin", color: { rgb: "CCCCCC" } },
+                        bottom: { style: "thin", color: { rgb: "CCCCCC" } },
+                        left: { style: "thin", color: { rgb: "CCCCCC" } },
+                        right: { style: "thin", color: { rgb: "CCCCCC" } }
+                    }
+                };
+            }
+        }
+        if (typeof cellA.v === "number") {
+            for (var c4 = 0; c4 < 3; c4++) {
+                var addr3 = XLSX.utils.encode_cell({ r: R, c: c4 });
+                var cell = ws[addr3];
+                cell.s ||= {};
+                cell.s.alignment = {
+                    vertical: "top",
+                    horizontal: c4 === 2 ? "left" : "center",
+                    wrapText: true
+                };
+                cell.s.border = {
+                    top: { style: "thin", color: { rgb: "DDDDDD" } },
+                    bottom: { style: "thin", color: { rgb: "DDDDDD" } },
+                    left: { style: "thin", color: { rgb: "DDDDDD" } },
+                    right: { style: "thin", color: { rgb: "DDDDDD" } }
+                };
+            }
+        }
+    }
+    ws['!cols'] = [{ wch: 6 }, { wch: 14 }, { wch: 80 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Report");
+    XLSX.writeFile(wb, fileName + ".xlsx");
+    showToast('✅ Excel report exported successfully!');
+}
+
+function exportHTML(rows) {
+    if (!rows || !rows.length) {
+        showToast('No data to export');
+        return;
+    }
+
+    var fromDate = document.querySelector("#from")?.value;
+    var toDate = document.querySelector("#to")?.value;
+    var isSearch = isSearchActive && searchQuery;
+    var fileName = "cases";
+
+    if (isSearch) {
+        fileName = "search-results";
+    } else if (fromDate && toDate) {
+        fileName = fromDate === toDate ? "cases-" + fromDate : "cases-" + fromDate + "_" + toDate;
+    } else if (fromDate) {
+        fileName = "cases-" + fromDate;
+    } else if (toDate) {
+        fileName = "cases-" + toDate;
+    }
+
+    var grouped = {};
+    rows.forEach(function(r) {
+        if (!grouped[r.date]) grouped[r.date] = [];
+        grouped[r.date].push(r);
+    });
+
+    var themeColor = COLORS[colorIndex];
+    var html = '' +
+    '<!DOCTYPE html><html lang="ar"><head><meta charset="UTF-8"><title>' + (isSearch ? 'Search Results' : 'Case Report') + '</title><style>' +
+    "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');" +
+    ':root{--theme:' + themeColor + ';--bg:#FFFFFF;--card:#F8FAFC;--border:#E6EAF0;--text:#111827;--muted:#6B7280;}' +
+    'body{margin:0;padding:30px;font-family:"Inter","Segoe UI",system-ui,sans-serif;background:#F2F5F9;color:var(--text);direction:rtl;}' +
+    '.report{max-width:1140px;margin:auto;background:var(--bg);border-radius:20px;padding:28px;box-shadow:0 24px 64px rgba(0,0,0,0.08),0 2px 12px rgba(0,0,0,0.02);border:1px solid var(--border);}' +
+    'h1{margin:0 0 2px;color:var(--theme);font-size:28px;font-weight:800;letter-spacing:-0.5px;}' +
+    '.subtitle{color:var(--muted);margin-bottom:20px;font-size:14px;font-weight:500;}' +
+    '.table-wrap{border-radius:16px;overflow:hidden;border:1px solid var(--border);background:var(--bg);}' +
+    'table{width:100%;border-collapse:collapse;font-size:14px;font-family:"Inter","Segoe UI",system-ui,sans-serif;}' +
+    '.date-header th{background:var(--theme);color:#FFFFFF;padding:0;border:none;}' +
+    '.date-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;}' +
+    '.date-head .date-text{font-weight:700;font-size:15px;letter-spacing:0.3px;color:rgba(255,255,255,0.95);}' +
+    '.date-head .date-count{font-size:13px;font-weight:700;opacity:0.9;background:rgba(255,255,255,0.15);padding:4px 14px;border-radius:20px;color:rgba(255,255,255,0.95);}' +
+    '.col-header th{padding:10px 12px;text-align:center;font-weight:600;font-size:12px;color:#9CA3B0;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px;background:var(--card);}' +
+    '.col-header th:last-child{text-align:center;}' +
+    'td{padding:10px 12px;border-bottom:1px solid #F1F3F6;border-left:1px solid #F1F3F6;border-right:1px solid #F1F3F6;color:var(--text);}' +
+    'td:first-child{border-left:none;}' +
+    'td:last-child{border-right:none;border-bottom:1px solid #F1F3F6;}' +
+    'tbody tr:last-child td{border-bottom:none;}' +
+    '.center{text-align:center;}' +
+    '.fr-link{color:var(--theme);font-weight:700;text-decoration:none;}' +
+    '.text{text-align:right;direction:rtl;line-height:1.6;color:var(--text);cursor:pointer;}' +
+    '.text:hover{background:#F1F3F6;}' +
+    'tbody tr:hover{background:#F1F3F6;}' +
+    '.progress-wrap{display:flex;align-items:center;gap:12px;flex:1;margin:0 16px;}' +
+    '.progress-bar{flex:1;height:6px;background:rgba(255,255,255,0.25);border-radius:4px;overflow:hidden;}' +
+    '.progress-fill{height:100%;border-radius:4px;background:linear-gradient(90deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65));transition:width 0.3s ease;box-shadow:0 0 8px rgba(255,255,255,0.25);}' +
+    '.progress-text{font-size:12px;font-weight:600;opacity:0.9;min-width:40px;text-align:right;color:rgba(255,255,255,0.9);}' +
+    '.copy-tooltip{position:fixed;background:#111827;color:#fff;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:500;z-index:9999999;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.2);opacity:0;transform:translateY(8px);transition:all 0.25s ease;}' +
+    '</style></head><body><div class="report">' +
+    '<h1>' + (document.querySelector(".text-black.font-bold.md\\:text-base.md\\:leading-6")?.textContent.replace("مرحبا", "").replace("!", "").trim() || "Case Report") + '</h1>' +
+    '<div class="subtitle">' + (isSearch ? '🔍 Search Results: "' + searchQuery + '"' : (fromDate && toDate ? (fromDate === toDate ? fromDate : fromDate + ' - ' + toDate) : fromDate ? 'From: ' + fromDate : toDate ? 'Up to: ' + toDate : "All dates")) + '</div>' +
+    '<div class="table-wrap"><table>';
+
+    var dates = Object.keys(grouped).sort().reverse();
+    var showProgress = !isSearch;
+    var copyScript = '';
+
+    for (var d = 0; d < dates.length; d++) {
+        var date = dates[d];
+        var total = grouped[date].length;
+        html += '' +
+        '<thead class="date-header">' +
+        '<tr><th colspan="3">' +
+        '<div class="date-head">' +
+        '<span class="date-text">📅 ' + date + '</span>';
+
+        if (showProgress) {
+            var percent = Math.min((total / 30) * 100, 100);
+            html += '' +
+            '<div class="progress-wrap">' +
+            '<div class="progress-bar">' +
+            '<div class="progress-fill" style="width:' + percent + '%;"></div>' +
+            '</div>' +
+            '<span class="progress-text">' + percent.toFixed(0) + '%</span>' +
+            '</div>';
+        } else {
+            html += '<div style="flex:1;margin:0 16px;"></div>';
+        }
+
+        html += '' +
+        '<span class="date-count">' + total + ' cases</span>' +
+        '</div>' +
+        '</th></tr>' +
+        '<tr class="col-header">' +
+        '<th style="width:60px;">#</th>' +
+        '<th style="width:130px;">Case ID</th>' +
+        '<th style="text-align:center;">Case Notes</th>' +
+        '</tr>' +
+        '</thead>' +
+        '<tbody>';
+
+        for (var r = 0; r < grouped[date].length; r++) {
+            var row = grouped[date][r];
+            var escapedText = row.text
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '&#10;')
+                .replace(/'/g, '&#39;');
+            html += '' +
+            '<tr>' +
+            '<td class="center" style="font-weight:500;color:#6B7280;">' + row.idx + '</td>' +
+            '<td class="center"><a href="https://ops.rer.sa/case-view?caseId=' + encodeURIComponent(row.fr) + '" target="_blank" rel="noopener" class="fr-link">' + row.fr + '</a></td>' +
+            '<td class="text" data-copy-text="' + escapedText + '">' + row.text.replace(/\n/g, '<br>') + '</td>' +
+            '</tr>';
+            copyScript += '' +
+            'document.querySelectorAll(".text[data-copy-text]").forEach(function(el) {' +
+            '  el.addEventListener("click", function() {' +
+            '    var text = this.getAttribute("data-copy-text");' +
+            '    navigator.clipboard.writeText(text).then(function() {' +
+            '      showCopyTooltip(el, "✅ تم النسخ");' +
+            '    }).catch(function() {' +
+            '      var ta=document.createElement("textarea");' +
+            '      ta.value=text;' +
+            '      document.body.appendChild(ta);' +
+            '      ta.select();' +
+            '      document.execCommand("copy");' +
+            '      ta.remove();' +
+            '      showCopyTooltip(el, "✅ تم النسخ");' +
+            '    });' +
+            '  });' +
+            '});';
+        }
+        html += '</tbody>';
+    }
+
+    html += '</table></div></div>' +
+    '<script>' +
+    copyScript +
+    'function showCopyTooltip(el, msg) { var t=document.createElement("div"); t.className="copy-tooltip"; t.textContent=msg; document.body.appendChild(t); var r=el.getBoundingClientRect(); t.style.left=(r.left+r.width/2-30)+"px"; t.style.top=(r.top-40)+"px"; requestAnimationFrame(function(){t.style.opacity="1";t.style.transform="translateY(0)";}); setTimeout(function(){t.style.opacity="0";t.style.transform="translateY(8px)"; setTimeout(function(){t.remove();},300);},1200); }' +
+    '</script>' +
+    '</body></html>';
+
+    download(html, fileName + ".html", "text/html");
+    showToast('✅ HTML report exported successfully!');
+}
+
+function download(data, name, type) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([data], { type: type }));
+    a.download = name;
+    a.click();
+}
+
+// ─── Storage Events ──────────────────────────────────────
+window.addEventListener("storage", function(event) {
+    if (event.key === SETTINGS_KEY && event.newValue) {
+        settings = JSON.parse(event.newValue);
+        applySettings();
+    }
+    if (event.key === STORAGE_KEY) {
+        updateCounter();
+    }
+});
+
+injectStyles();
+}
+})();
