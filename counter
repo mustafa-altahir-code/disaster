@@ -1,8 +1,8 @@
 /*!
 * Counter
-* Discribtion: Display submitted cases count and reports with live transition diagnostics
+* Discribtion: Display submitted cases count and reports (Instant capture & Reload resilient)
 * Author: Mustafa Altahir
-* Version: 5.4
+* Version: 5.5
 * Created: April 2025
 * Updated: October 2026
 */
@@ -46,6 +46,7 @@ reject(new Error("XLSX not available."));
 
 const STORAGE_KEY = "clickCounterHistory";
 const SETTINGS_KEY = "caseSettings";
+const LAST_SUBMITTED_KEY = "lastSubmittedCaseTemp";
 
 const COLORS = [
 "#0A3556",
@@ -90,34 +91,28 @@ return {};
 
 const save = d => localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
 
-// ─── استخراج رقم الطلب (FR / DU) والعنصر الخاص به ─────────
-const getCaseInfo = () => {
+// ─── قراءة واستخراج نوع الطلب (FR أو DU) ────────────────────
+const extractCaseId = () => {
     var caseElement = document.querySelector('.uppercase.text-\\[12px\\]') || 
                       document.querySelector('span.uppercase.text-\\[12px\\]');
     if (caseElement) {
         var text = caseElement.textContent.trim();
+        // دعم الصيغ التي تبدأ بـ FR أو DU
         var match = text.match(/(FR|DU)\s*(\d+)/i);
         if (match) {
-            return {
-                element: caseElement,
-                id: match[1].toUpperCase() + match[2],
-                rawText: text
-            };
+            return match[1].toUpperCase() + match[2];
         }
-        return { element: caseElement, id: text, rawText: text };
+        return text;
     }
-    return { element: null, id: "N/A", rawText: "N/A" };
+    return "N/A";
 };
 
-const extractTextInfo = () => {
+const extractText = () => {
     var textarea = document.querySelector("textarea");
     if (textarea) {
-        return {
-            element: textarea,
-            text: textarea.value.trim() || "N/A"
-        };
+        return textarea.value.trim() || "N/A";
     }
-    return { element: null, text: "N/A" };
+    return "N/A";
 };
 
 const flatten = () => {
@@ -164,121 +159,80 @@ return 0;
 
 const ASSIGNMENT_TEXT = "تعيين الطلب لمدقق الطلبات";
 
-// ─── قراءة الـ Dropdown مع إعادة العنصر ────────────────────
-function getDropdownInfo() {
+// ─── Get dropdown value from React Select ──────────────
+function getDropdownValue() {
     var dropdowns = document.querySelectorAll('.drop-down-box.css-b62m3t-container');
     if (dropdowns.length < 2) {
-        return { element: null, value: '' };
+        return '';
     }
     var dropdown = dropdowns[1];
     var selectedValue = dropdown.querySelector('.css-z588e4-singleValue');
-    return {
-        element: dropdown,
-        value: selectedValue ? selectedValue.textContent.trim() : ''
-    };
+    if (selectedValue) {
+        return selectedValue.textContent.trim();
+    }
+    return '';
 }
 
-// ─── نظام الإشعارات المتطور والمميز بالألوان ───────────────
-function showStageToast(stage, title, details) {
-    var existingToast = document.getElementById('stage-notification-toast');
+// ─── إشعار ملون مع تفاصيل الحالة ─────────────────────────
+function showResultToast(stage, message, details) {
+    var existingToast = document.getElementById('case-result-toast');
     if (existingToast) existingToast.remove();
 
-    var colors = {
-        capture: { bg: '#1E40AF', border: '#60A5FA', icon: '🔵' }, // مرحلة الالتقاط
-        waiting: { bg: '#9A3412', border: '#FB923C', icon: '🟠' }, // مرحلة المراقبة والانتظار
-        success: { bg: '#065F46', border: '#34D399', icon: '🟢' }, // نجاح الانتقال والتسجيل
-        error:   { bg: '#991B1B', border: '#F87171', icon: '🔴' }  // خطأ أو عدم تطابق
+    var toast = document.createElement('div');
+    toast.id = 'case-result-toast';
+
+    var stageConfig = {
+        success: { bg: '#065F46', border: '#10B981', icon: '🟢' },
+        warning: { bg: '#9A3412', border: '#F59E0B', icon: '🟠' },
+        error:   { bg: '#991B1B', border: '#EF4444', icon: '🔴' }
     };
 
-    var config = colors[stage] || colors.capture;
-    var toast = document.createElement('div');
-    toast.id = 'stage-notification-toast';
+    var conf = stageConfig[stage] || stageConfig.success;
 
     Object.assign(toast.style, {
         position: 'fixed',
         top: '20px',
         left: '50%',
         transform: 'translateX(-50%) translateY(-20px)',
-        background: config.bg,
+        background: conf.bg,
         color: '#FFFFFF',
-        padding: '14px 24px',
-        borderRadius: '14px',
-        boxShadow: '0 15px 45px rgba(0,0,0,0.45)',
-        border: '2px solid ' + config.border,
+        padding: '14px 28px',
+        borderRadius: '16px',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+        border: '2px solid ' + conf.border,
         fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
         fontSize: '14px',
         fontWeight: '600',
         zIndex: 9999999,
         opacity: '0',
         transition: 'all 0.35s cubic-bezier(0.2, 0.8, 0.2, 1)',
-        maxWidth: '550px',
+        maxWidth: '520px',
         textAlign: 'center',
         direction: 'rtl',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)'
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
     });
-
-    var detailsHTML = details ? '<div style="font-size:12px;opacity:0.9;font-weight:400;margin-top:4px;">' + details + '</div>' : '';
-    toast.innerHTML = config.icon + ' ' + title + detailsHTML;
+    
+    var detailsHTML = details ? '<div style="font-size:12px;opacity:0.85;font-weight:400;margin-top:4px;">' + details + '</div>' : '';
+    toast.innerHTML = conf.icon + ' ' + message + detailsHTML;
+    
     document.body.appendChild(toast);
-
+    
     requestAnimationFrame(function() {
         toast.style.opacity = '1';
         toast.style.transform = 'translateX(-50%) translateY(0)';
     });
-
-    if (stage !== 'waiting') {
-        setTimeout(function() {
-            if (toast && toast.parentNode) {
-                toast.style.opacity = '0';
-                toast.style.transform = 'translateX(-50%) translateY(-20px)';
-                setTimeout(() => toast.remove(), 400);
-            }
-        }, 5000);
-    }
+    
+    setTimeout(function() {
+        if (toast && toast.parentNode) {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(-50%) translateY(-20px)';
+            setTimeout(function() { toast.remove(); }, 400);
+        }
+    }, 4500);
 }
 
-// ─── لوحة التقرير التشخيصي للانتقال (DOM Transition Report) ──
-function showDiagnosticsBox(info) {
-    var existingBox = document.getElementById('transition-diagnostics-box');
-    if (existingBox) existingBox.remove();
-
-    var box = document.createElement('div');
-    box.id = 'transition-diagnostics-box';
-    Object.assign(box.style, {
-        position: 'fixed',
-        bottom: '20px',
-        right: '20px',
-        width: '320px',
-        background: '#111827',
-        color: '#F9FAFB',
-        border: '1px solid #374151',
-        borderRadius: '12px',
-        padding: '14px',
-        fontSize: '12px',
-        fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
-        zIndex: 9999998,
-        boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
-        direction: 'rtl'
-    });
-
-    box.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:700;color:#60A5FA;">
-            <span>📋 تقرير تغير عناصر الصفحة</span>
-            <span style="font-size:10px;cursor:pointer;color:#9CA3AF;" onclick="this.parentElement.parentElement.remove()">✕</span>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:5px;">
-            <div>• نوع الطلب القديم: <span style="color:#FBBF24;">${info.caseId}</span></div>
-            <div>• اختفاء عنصر الطلب: <span id="diag-case-status" style="color:#F87171;">قيد المراقبة...</span></div>
-            <div>• اختفاء عنصر التعليق: <span id="diag-text-status" style="color:#F87171;">قيد المراقبة...</span></div>
-            <div>• اختفاء القائمة (Dropdown): <span id="diag-drop-status" style="color:#F87171;">قيد المراقبة...</span></div>
-        </div>
-    `;
-    document.body.appendChild(box);
-    return box;
-}
-
-// ─── تسجيل الحالة في التخزين ─────────────────────────────
+// ─── تسجيل الحالة ────────────────────────────────────────
 function recordCase(caseId, text) {
     try {
         var h = load();
@@ -315,150 +269,68 @@ function recordCase(caseId, text) {
     }
 }
 
-// ─── معالج الضغط على «متابعة» مع نظام المراقبة الدقيق ─────
-let isObservingTransition = false;
+// ─── التحقق عند تحميل الصفحة الجديدة بعد التحديث ─────────
+(function checkPostReload() {
+    try {
+        var pending = sessionStorage.getItem(LAST_SUBMITTED_KEY);
+        if (pending) {
+            var data = JSON.parse(pending);
+            sessionStorage.removeItem(LAST_SUBMITTED_KEY);
+            // إظهار إشعار أخضر بعد تحديث الصفحة بنجاح
+            showResultToast('success', '🟢 تم تحديث الصفحة وتأكيد تسجيل الطلب!', 'تم حفظ الطلب: ' + data.id);
+        }
+    } catch (e) {}
+})();
 
+// ─── معالج الضغط على زر «متابعة» (تسجيل فوري مع الاستعداد للتحديث) ──
 document.addEventListener("click", function(e) {
-    // التقاط الزر سواء عبر المحدد الأصلي أو عبر نص الزر لضمان عدم تفويت الضغطة
+    var target = e.target;
     var continueBtn = document.querySelector(
         '#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div.mt-12 > div:nth-child(13) > div.flex.justify-between.items-center > div > div > button'
     );
-
-    var target = e.target;
-    var clickedContinue = false;
-
+    
+    var isContinue = false;
     if (continueBtn && (target === continueBtn || continueBtn.contains(target))) {
-        clickedContinue = true;
+        isContinue = true;
     } else {
-        // فحص بديل في حال تغير مسار الزر قليلاً في DOM
-        var btnElement = target.closest('button');
-        if (btnElement && btnElement.textContent.trim().includes("متابعة")) {
-            clickedContinue = true;
+        // فحص بديل بنص الزر في حال تغيّر مسار الزر
+        var btn = target.closest('button');
+        if (btn && btn.textContent.trim().includes("متابعة")) {
+            isContinue = true;
         }
     }
+    
+    if (!isContinue) return;
 
-    if (!clickedContinue) return;
-    if (isObservingTransition) return; // منع التكرار
+    var caseId = extractCaseId();
+    var text = extractText();
+    var dropdownValue = getDropdownValue();
+    
+    // التحقق من أن رقم الطلب يبدأ بـ FR أو DU
+    var caseValid = caseId && caseId !== "N/A" && /^(FR|DU)/i.test(caseId);
+    var textValid = text && text !== "N/A" && text.length > 0;
+    var dropdownMatch = dropdownValue === ASSIGNMENT_TEXT;
+    
+    if (caseValid && textValid && dropdownMatch) {
+        // يتم التسجيل فوراً في الـ localStorage قبل أن تغلق أو تحدث الصفحة
+        var result = recordCase(caseId, text);
 
-    // 1. قراءة وحفظ بيانات وعناصر الشروط الحالية
-    var caseInfo = getCaseInfo();
-    var textInfo = extractTextInfo();
-    var dropdownInfo = getDropdownInfo();
-
-    var caseValid = caseInfo.id && caseInfo.id !== "N/A" && /^(FR|DU)/i.test(caseInfo.id);
-    var textValid = textInfo.text && textInfo.text !== "N/A" && textInfo.text.length > 0;
-    var dropdownMatch = dropdownInfo.value === ASSIGNMENT_TEXT;
-
-    // إذا كانت الشروط غير مكتملة، عرض تنبيه باللون الأحمر
-    if (!caseValid || !textValid || !dropdownMatch) {
+        if (result.success) {
+            // حفظ بيانات الحالة في sessionStorage للتأكيد بعد التحديث
+            sessionStorage.setItem(LAST_SUBMITTED_KEY, JSON.stringify({ id: caseId, text: text, time: Date.now() }));
+            showResultToast('success', '🟢 تم تسجيل الحالة بنجاح!', 'الطلب: ' + caseId);
+        } else if (result.reason === 'duplicate') {
+            showResultToast('warning', '🟠 حالة مكررة - لم يتم التسجيل', 'الطلب ' + caseId + ' مسجل مسبقاً لهذا اليوم');
+        } else {
+            showResultToast('error', '🔴 خطأ أثناء التسجيل', 'يرجى المحاولة مرة أخرى');
+        }
+    } else {
         var missing = [];
-        if (!caseValid) missing.push("رقم الطلب غير صالح أو لا يبدأ بـ FR أو DU (" + caseInfo.id + ")");
+        if (!caseValid) missing.push("نوع الطلب غير صالح (يجب أن يبدأ بـ FR أو DU)");
         if (!textValid) missing.push("نص التعليق فارغ");
-        if (!dropdownMatch) missing.push("القائمة ليست: " + ASSIGNMENT_TEXT + " (القيمة الحالية: " + (dropdownInfo.value || "فارغة") + ")");
-        
-        showStageToast('error', '❌ تعذر بدء التسجيل: الشروط غير مكتملة', missing.join(" | "));
-        return;
+        if (!dropdownMatch) missing.push("اختر: " + ASSIGNMENT_TEXT);
+        showResultToast('error', '🔴 لم يتم التسجيل: الشروط غير مكتملة', missing.join(" | "));
     }
-
-    // 2. المرحلة الأولى: تم التقاط العناصر وحفظ مراجعها (أزرق)
-    showStageToast('capture', '🔵 المرحلة 1: تم حفظ شروط الطلب ' + caseInfo.id, 'تم رصد FR/DU والتعليق والـ Dropdown. بانتظار استجابة الصفحة...');
-
-    const savedElements = {
-        caseEl: caseInfo.element,
-        textEl: textInfo.element,
-        dropEl: dropdownInfo.element,
-        oldCaseId: caseInfo.id,
-        oldText: textInfo.text
-    };
-
-    var diagBox = showDiagnosticsBox(savedElements);
-    isObservingTransition = true;
-
-    // 3. المرحلة الثانية: بدء المراقبة بانتظار اختفاء العناصر أو تغير الصفحة (برتقالي)
-    setTimeout(() => {
-        if (isObservingTransition) {
-            showStageToast('waiting', '🟠 المرحلة 2: جاري مراقبة اختفاء العناصر وتحديث الصفحة...', 'يتم التحقق من اختفاء عناصر الطلب السابقة...');
-        }
-    }, 400);
-
-    const checkDisappearanceOrChange = () => {
-        // فحص هل خرجت كائنات العناصر السابقة نفسها من شجرة الصفحة
-        var caseRemoved = !savedElements.caseEl || !document.body.contains(savedElements.caseEl);
-        var textRemoved = !savedElements.textEl || !document.body.contains(savedElements.textEl);
-        var dropRemoved = !savedElements.dropEl || !document.body.contains(savedElements.dropEl);
-
-        // فحص إضافي ذكي (تحديث نصوص وحقول الصفحة في حال أعادت React استخدام العناصر)
-        var currentCase = getCaseInfo();
-        var caseChanged = currentCase.id !== savedElements.oldCaseId;
-        var textEmptiedOrChanged = savedElements.textEl && (savedElements.textEl.value !== savedElements.oldText);
-
-        // تحديث الصندوق التشخيصي
-        var diagCase = document.getElementById('diag-case-status');
-        var diagText = document.getElementById('diag-text-status');
-        var diagDrop = document.getElementById('diag-drop-status');
-
-        if (diagCase) {
-            if (caseRemoved || caseChanged) {
-                diagCase.innerHTML = '✅ اختفى / تغيّر الطلب';
-                diagCase.style.color = '#34D399';
-            }
-        }
-        if (diagText) {
-            if (textRemoved || textEmptiedOrChanged) {
-                diagText.innerHTML = '✅ اختفى / تم إفراغ النص';
-                diagText.style.color = '#34D399';
-            }
-        }
-        if (diagDrop) {
-            if (dropRemoved) {
-                diagDrop.innerHTML = '✅ اختفت القائمة القديمة';
-                diagDrop.style.color = '#34D399';
-            }
-        }
-
-        // تعتبر الصفحة انتقلت إذا اختفت العناصر القديمة من الـ DOM
-        // أو إذا تغير رقم الطلب وأفرغ حقل التعليق (تأكيد انتقال الصفحة للطلب التالي)
-        var allDisappeared = (caseRemoved && textRemoved && dropRemoved);
-        var pageAdvanced = caseChanged && (textRemoved || textEmptiedOrChanged);
-
-        return allDisappeared || pageAdvanced;
-    };
-
-    const observer = new MutationObserver(() => {
-        if (checkDisappearanceOrChange()) {
-            observer.disconnect();
-            clearTimeout(timeoutId);
-            isObservingTransition = false;
-
-            // 4. المرحلة الثالثة: تأكيد نجاح الانتقال والتسجيل (أخضر)
-            var result = recordCase(savedElements.oldCaseId, savedElements.oldText);
-            
-            if (result.success) {
-                showStageToast('success', '🟢 المرحلة 3: تم تأكيد الانتقال وتسجيل الطلب بنجاح!', 'تم حفظ الطلب: ' + savedElements.oldCaseId);
-            } else if (result.reason === 'duplicate') {
-                showStageToast('error', '⚠️ الطلب مسجل مسبقاً', 'تم الانتقال بنجاح ولكن الطلب ' + savedElements.oldCaseId + ' موجود بالفعل في السجل');
-            } else {
-                showStageToast('error', '❌ حدث خطأ أثناء الحفظ', 'يرجى مراجعة الذاكرة المؤقتة');
-            }
-
-            // إخفاء الصندوق التشخيصي بعد ثانيتين من النجاح
-            setTimeout(() => {
-                if (diagBox) diagBox.remove();
-            }, 3000);
-        }
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
-
-    // مهلة في حال لم تتغير الصفحة مطلقاً
-    const timeoutId = setTimeout(() => {
-        if (isObservingTransition) {
-            observer.disconnect();
-            isObservingTransition = false;
-            showStageToast('error', '❌ مهلة الانتظار انتهت: لم تتغير الصفحة', 'لم تختفِ العناصر السابقة من الـ DOM، لذلك لم يتم التسجيل لضمان عدم التكرار');
-        }
-    }, 12000);
-
 }, true);
 
 // ─── Highlight Counter ──────────────────────────────────
@@ -529,18 +401,23 @@ function highlightNewRecord() {
     });
     
     setTimeout(function() {
-        if (glowLayer && glowLayer.parentNode) glowLayer.parentNode.removeChild(glowLayer);
+        if (glowLayer && glowLayer.parentNode) {
+            glowLayer.parentNode.removeChild(glowLayer);
+        }
     }, 1300);
     
     setTimeout(function() {
         fireImg.style.opacity = '0';
         fireImg.style.transform = 'scale(0.5)';
         setTimeout(function() {
-            if (fireImg && fireImg.parentNode) fireImg.parentNode.removeChild(fireImg);
+            if (fireImg && fireImg.parentNode) {
+                fireImg.parentNode.removeChild(fireImg);
+            }
         }, 400);
     }, 2000);
 }
 
+// ─── Color Filter for GIF ──────────────────────────────
 function getColorFilter(index) {
     var filters = [
         'hue-rotate(190deg) saturate(2) brightness(0.8)',
@@ -1135,7 +1012,7 @@ function createFeedbackPopup(modalElement) {
     };
 }
 
-// بناء نافذة العرض والمودال
+// بناء نافذة العرض
 currentModal.innerHTML = '' +
 '<div style="padding: 24px 28px 20px 28px; border-bottom: 1px solid ' + (settings.darkMode
 ? '0.8px solid rgba(255,255,255,0.06)'
