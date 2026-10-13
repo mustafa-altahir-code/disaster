@@ -1,87 +1,3 @@
-متطلبات تطوير سكربت استخراج وتعبئة بيانات العقارات — إضافة وظائف الصك المتعدد
-1. الهدف من التعديل
-
-إضافة وظيفتين جديدتين إلى الزر العائم الحالي للتعامل مع بيانات الصك المتعدد، باستخدام حافظة النصوص (Clipboard) فقط، مع الحفاظ على جميع الوظائف الحالية دون تغيير سلوكها.
-
-الفكرة الأساسية هي نسخ بيانات الصك المتعدد من عقار، ثم الانتقال إلى عقار آخر وتعبئة البيانات نفسها من الحافظة، دون الحاجة إلى نسخ البيانات يدويًا حقلًا بحقل، ودون استخدام Excel في هذه العملية.
-
-2. توزيع الوظائف على الزر العائم
-
-يجب أن يدعم الزر العائم أربع وظائف وفقًا لطريقة الضغط:
-
-كلك يسار: استخراج كامل بيانات العقار للتقرير، كما هو معمول به حاليًا، ونسخ النتائج إلى الحافظة بتنسيق مناسب للنسخ إلى Excel.
-كلك يسار + Ctrl: استخراج بيانات الصك المتعدد فقط، ثم نسخها إلى الحافظة بتنسيق نصي خاص يمكن قراءته لاحقًا عند التعبئة.
-كلك يمين: تعبئة بيانات العقار من الحافظة، كما هو معمول به حاليًا، دون تغيير.
-كلك يمين + Ctrl: قراءة بيانات الصك المتعدد من الحافظة وتعبئة الحقول المقابلة في صفحة العقار الحالية.
-
-يجب التمييز بين الوظائف الأربع باستخدام نوع النقرة وحالة مفتاح Ctrl، مع منع تنفيذ أكثر من وظيفة في الوقت نفسه.
-
-3. الحقول المشمولة في وظائف الصك المتعدد
-أ. الحقول الأساسية — 5 حقول
-رقم القطعة بالمخطط.
-رقم المخطط.
-رقم البلوك.
-الحدود حسب الصك.
-النطاق الجغرافي لإسقاط مركاتور المستعرض العالمي.
-ب. حقول الاتجاهات — 4 حقول لكل اتجاه
-
-تُستخرج وتُعبّأ الحقول التالية لكل اتجاه موجود:
-
-اتجاه 1.
-الحدود حسب الصك 1.
-الأبعاد حسب الصك (طول الضلع) 1.
-الأبعاد حسب الصك (المجموع) 1.
-
-وتتكرر المجموعة نفسها للاتجاهات 2 و3 و4.
-
-إجمالي الحقول المستهدفة هو 5 حقول أساسية، بالإضافة إلى 4 حقول لكل اتجاه، أي 21 حقلًا عند وجود الاتجاهات الأربعة كاملة.
-
-4. آلية استخراج بيانات الصك المتعدد
-
-عند الضغط على الزر بالزر الأيسر مع Ctrl، يجب تنفيذ الآتي:
-
-قراءة القيم الحالية للحقول الأساسية الخمسة.
-قراءة قيم حقول الاتجاهات الأربعة لكل صف من صفوف الاتجاهات الموجودة.
-حفظ جميع القيم في نص منظم داخل الحافظة، باستخدام تنسيق ثابت يسهل تحليله لاحقًا.
-عدم فتح نافذة Excel أو إنشاء ملف.
-عدم تضمين بيانات الإحداثيات أو أي حقول خارج النطاق المحدد.
-
-يجب الحفاظ على ترتيب الحقول، وعدم فقدان القيم الفارغة أو الخلط بين قيم الحقول المختلفة عند إعادة التعبئة.
-
-5. آلية تعبئة بيانات الصك المتعدد
-
-عند الضغط على الزر بالزر الأيمن مع Ctrl، يجب تنفيذ الآتي:
-
-قراءة النص الموجود في الحافظة.
-تحليل النص واستخراج قيم الحقول وفقًا للتنسيق المعتمد في وظيفة النسخ.
-تعبئة الحقول الأساسية الخمسة في صفحة العقار الحالية.
-تعبئة حقول الاتجاهات المقابلة باستخدام الصفوف الموجودة بالفعل.
-عدم إضافة أي صفوف جديدة للاتجاهات، وعدم حذف أي صفوف موجودة.
-عدم تعبئة الإحداثيات أو تعديلها.
-عدم تشغيل وظيفة تعبئة العقار الحالية ضمن هذه العملية.
-
-إذا تعذرت قراءة الحافظة أو كان النص غير صالح أو لا يتوافق مع التنسيق المتوقع، يجب إظهار إشارة واضحة إلى فشل العملية، دون تعبئة بيانات غير صحيحة.
-
-6. قيود مهمة
-يجب أن تعمل الوظائف الجديدة على الحقول الموجودة أصلًا في صفحة تفاصيل العقار.
-عدد صفوف الاتجاهات المتاح افتراضيًا هو أربعة، ولا حاجة إلى إضافة صفوف جديدة.
-لا تدخل الإحداثيات ضمن نطاق الصك المتعدد، لا في الاستخراج ولا في التعبئة.
-لا تستخدم وظائف الصك المتعدد تنسيق Excel؛ الحافظة النصية هي وسيلة التخزين المؤقت ونقل البيانات.
-يجب عدم تغيير آلية استخراج التقرير الكامل أو تعبئة بيانات العقار الحالية.
-يجب الحفاظ على سلوك الزر العائم الحالي، بما في ذلك السحب والإفلات، وإظهار الزر في الصفحات المستهدفة فقط.
-يجب مراعاة أحداث النقر وCtrl حتى لا تؤدي نقرة واحدة إلى تشغيل وظيفتين، مع إلغاء القائمة السياقية الافتراضية عند استخدام الزر الأيمن.
-7. سيناريو الاختبار المطلوب
-فتح العقار الأول وتسجيل قيم الحقول المطلوبة.
-الضغط على Ctrl + كلك يسار لنسخ بيانات الصك المتعدد.
-الانتقال إلى عقار آخر وتغيير رقم العقار.
-الضغط على Ctrl + كلك يمين لتعبئة البيانات المنسوخة.
-التحقق من تطابق القيم المنسوخة مع القيم التي تمت تعبئتها.
-التأكد من عدم تغيير الإحداثيات، وعدم إضافة صفوف جديدة، وعدم تأثر وظائف التقرير الكامل والتعبئة الحالية.
-8. النتيجة المطلوبة
-
-إضافة وظيفتين مستقلتين للصك المتعدد، تتيحان نقل بيانات الصك بين العقارات عبر الحافظة النصية، مع الالتزام بالحقول المحددة فقط، والحفاظ الكامل على الوظائف الحالية دون تغييرات غير مطلوبة.
-
-
 (() => {
   "use strict";
 
@@ -91,7 +7,8 @@
 
   const CONFIG = {
     buttonId: "property-extractor-button",
-    containerId: "property-extractor-container"
+    containerId: "property-extractor-container",
+    multiDeedHeader: "=== MULTI_DEED_DATA_V1 ==="
   };
 
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -134,7 +51,6 @@
     "رقم الطلب",
     "رقم صك وزارة العدل",
     "تاريخ الصك",
-
 
     "رقم السجل العقاري",
     "رقم القطعة بالمخطط",
@@ -184,7 +100,7 @@
   ];
 
   /* ============================================================
-   * البحث عن الحقول
+   * البحث عن الحقول وقراءتها
    * ============================================================ */
 
   function findByPlaceholder(text, excludeName = null) {
@@ -310,7 +226,71 @@
   }
 
   /* ============================================================
-   * React Select
+   * مساعدات إدخال القيم وتحديث React State
+   * ============================================================ */
+
+  function setElementValue(el, value) {
+    if (!el) return false;
+
+    const proto = el.tagName === "TEXTAREA"
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (!setter) return false;
+
+    setter.call(el, String(value ?? ""));
+
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  async function setSelectValue(selectInput, targetValue) {
+    if (!selectInput || !targetValue) return false;
+
+    selectInput.focus();
+
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value"
+    )?.set;
+
+    if (setter) {
+      setter.call(selectInput, String(targetValue));
+      selectInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    await wait(200);
+
+    selectInput.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "ArrowDown",
+      code: "ArrowDown",
+      bubbles: true
+    }));
+
+    selectInput.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true
+    }));
+
+    selectInput.dispatchEvent(new KeyboardEvent("keyup", {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true
+    }));
+
+    await wait(100);
+    return true;
+  }
+
+  /* ============================================================
+   * React Select القراءة
    * ============================================================ */
 
   function getReactSelectValue(input) {
@@ -373,7 +353,7 @@
   }
 
   /* ============================================================
-   * رقم الطلب
+   * رقم الطلب وبيانات الصك والمالك
    * ============================================================ */
 
   function extractApplicationNumber() {
@@ -398,100 +378,62 @@
     return "";
   }
 
-  /* ============================================================
-   * بيانات الصك
-   * ============================================================ */
+  function extractDeedData() {
+    const result = {
+      "رقم صك وزارة العدل": "",
+      "تاريخ الصك": ""
+    };
 
-function extractDeedData() {
-  const result = {
-    "رقم صك وزارة العدل": "",
-    "تاريخ الصك": ""
-  };
-
-  // ============================================================
-  // رقم صك وزارة العدل
-  // المصدر المؤكد حسب الـ Selector
-  // ============================================================
-
-  const deedCell = document.querySelector(
-    'table.borderTable-new tbody.overflow-y-auto tr.cursor-pointer td.p-3.font-normal.text-\\[14px\\].leading-5.text-center'
-  );
-
-  if (deedCell) {
-    const value = cleanText(deedCell.textContent);
-
-    if (value) {
-      result["رقم صك وزارة العدل"] = value;
-    }
-  }
-
-  // ============================================================
-  // إذا لم يعمل الـ selector السابق
-  // نستخدم XPath
-  // ============================================================
-
-  if (!result["رقم صك وزارة العدل"]) {
-    const xpath =
-      '/html[1]/body[1]/div[1]/div[1]/div[2]/div[1]/div[6]/div[7]/div[2]/table[1]/tbody[1]/tr[1]/td[1]';
-
-    const xpathResult = document.evaluate(
-      xpath,
-      document,
-      null,
-      XPathResult.FIRST_ORDERED_NODE_TYPE,
-      null
+    const deedCell = document.querySelector(
+      'table.borderTable-new tbody.overflow-y-auto tr.cursor-pointer td.p-3.font-normal.text-\\[14px\\].leading-5.text-center'
     );
 
-    const cell = xpathResult.singleNodeValue;
+    if (deedCell) {
+      const value = cleanText(deedCell.textContent);
+      if (value) result["رقم صك وزارة العدل"] = value;
+    }
 
-    if (cell) {
-      const value = cleanText(cell.textContent);
+    if (!result["رقم صك وزارة العدل"]) {
+      const xpath =
+        '/html[1]/body[1]/div[1]/div[1]/div[2]/div[1]/div[6]/div[7]/div[2]/table[1]/tbody[1]/tr[1]/td[1]';
 
-      if (value) {
-        result["رقم صك وزارة العدل"] = value;
+      const xpathResult = document.evaluate(
+        xpath,
+        document,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null
+      );
+
+      const cell = xpathResult.singleNodeValue;
+      if (cell) {
+        const value = cleanText(cell.textContent);
+        if (value) result["رقم صك وزارة العدل"] = value;
       }
     }
-  }
 
-  // ============================================================
-  // تاريخ الصك
-  // ============================================================
-
-  const dateCells = document.querySelectorAll("td");
-
-  for (const td of dateCells) {
-    const value = cleanText(td.textContent);
-
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      result["تاريخ الصك"] = value;
-      break;
+    const dateCells = document.querySelectorAll("td");
+    for (const td of dateCells) {
+      const value = cleanText(td.textContent);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        result["تاريخ الصك"] = value;
+        break;
+      }
     }
+
+    return result;
   }
-
-  return result;
-}
-
-  /* ============================================================
-   * بيانات المالك
-   * ============================================================ */
 
   function extractOwnerData() {
     const result = {};
-
     const identityRegex = /^\d{10}$/;
-
     const identities = [];
     const names = [];
 
     const cells = document.querySelectorAll("td, p, span");
-
     for (const el of cells) {
       const text = cleanText(el.textContent);
-
-      if (
-        identityRegex.test(text) &&
-        !identities.includes(text)
-      ) {
+      if (identityRegex.test(text) && !identities.includes(text)) {
         identities.push(text);
       }
     }
@@ -502,7 +444,6 @@ function extractDeedData() {
 
     for (const el of candidates) {
       const text = cleanText(el.textContent);
-
       if (
         text &&
         text.length > 2 &&
@@ -515,19 +456,11 @@ function extractDeedData() {
       }
     }
 
-    const maxOwners = Math.max(
-      names.length,
-      identities.length
-    );
-
+    const maxOwners = Math.max(names.length, identities.length);
     for (let i = 0; i < maxOwners; i++) {
       const number = i + 1;
-
-      result[`اسم المالك ${number}`] =
-        names[i] || "";
-
-      result[`رقم الهوية ${number}`] =
-        identities[i] || "";
+      result[`اسم المالك ${number}`] = names[i] || "";
+      result[`رقم الهوية ${number}`] = identities[i] || "";
     }
 
     return result;
@@ -553,32 +486,23 @@ function extractDeedData() {
 
     for (const [field, placeholder] of mappings) {
       const r = getValueByPlaceholder(placeholder);
-
       result[field] = r.value;
     }
 
-    const landBoundary = getValueByPlaceholder(
-      "الحدود حسب طبقة الأراضي"
-    );
-
+    const landBoundary = getValueByPlaceholder("الحدود حسب طبقة الأراضي");
     result["الحدود حسب طبقة الأراضي"] = landBoundary.value;
 
     const deedBoundary = getValueByPlaceholder(
       "الحدود حسب الصك",
       "directions."
     );
-
     result["الحدود حسب الصك"] = deedBoundary.value;
 
     const description =
       document.querySelector('textarea[name="description"]') ||
       document.querySelector('textarea[placeholder="وصف العقار"]');
 
-    if (description) {
-      result["وصف العقار"] = getInputValue(description);
-    } else {
-      result["وصف العقار"] = "";
-    }
+    result["وصف العقار"] = description ? getInputValue(description) : "";
 
     const region = getSelectByName("region");
     result["المنطقة"] = region.value;
@@ -610,7 +534,6 @@ function extractDeedData() {
 
     for (let i = 0; i < 4; i++) {
       const number = i + 1;
-
       const hidden = document.querySelector(
         `input[name="directions.${i}.direction"]`
       );
@@ -618,29 +541,19 @@ function extractDeedData() {
       let directionValue = "";
 
       if (hidden) {
-        const parent =
-          hidden.closest("div") ||
-          hidden.parentElement;
-
-        const selectValue =
-          parent?.querySelector('[class*="singleValue"]');
-
-        directionValue = cleanText(
-          selectValue?.textContent || ""
-        );
+        const parent = hidden.closest("div") || hidden.parentElement;
+        const selectValue = parent?.querySelector('[class*="singleValue"]');
+        directionValue = cleanText(selectValue?.textContent || "");
 
         if (!directionValue) {
           const numeric = getInputValue(hidden);
-
           const directionMap = {
             "1": "الشمالية",
             "2": "الجنوبية",
             "3": "الشرقية",
             "4": "الغربية"
           };
-
-          directionValue =
-            directionMap[numeric] || numeric;
+          directionValue = directionMap[numeric] || numeric;
         }
       }
 
@@ -650,28 +563,21 @@ function extractDeedData() {
         const input = document.querySelector(
           `input[name="directions.${i}.${namePart}"]`
         );
-
         const key = `${label} ${number}`;
 
         if (input) {
           let value = getInputValue(input);
 
-          if (
-            !value ||
-            value === "0"
-          ) {
-            const fiberKey = Object.keys(input).find(
-              k => k.startsWith("__reactFiber$")
+          if (!value || value === "0") {
+            const fiberKey = Object.keys(input).find(k =>
+              k.startsWith("__reactFiber$")
             );
-
             let fiber = fiberKey ? input[fiberKey] : null;
 
             for (let level = 0; level < 10 && fiber; level++) {
               const props = fiber.memoizedProps;
-
               if (props?.control?._formValues) {
                 const formValues = props.control._formValues;
-
                 const direction = formValues?.directions?.[i];
 
                 if (
@@ -682,14 +588,11 @@ function extractDeedData() {
                 ) {
                   value = cleanText(direction[namePart]);
                 }
-
                 break;
               }
-
               fiber = fiber.return;
             }
           }
-
           result[key] = value;
         } else {
           result[key] = "";
@@ -700,22 +603,18 @@ function extractDeedData() {
     return result;
   }
 
-/* ============================================================
+  /* ============================================================
    * الإحداثيات
    * ============================================================ */
 
   function extractCoordinates() {
     const result = {};
-
     const groups = {};
 
-    const inputs = document.querySelectorAll(
-      'input[name*="coordinates."]'
-    );
+    const inputs = document.querySelectorAll('input[name*="coordinates."]');
 
     inputs.forEach(input => {
       const name = input.name || "";
-
       const match = name.match(
         /coordinates\.(\d+)\.(northCordinate|eastCordinate|northCoordinate|eastCoordinate|north|east)/i
       );
@@ -749,18 +648,186 @@ function extractDeedData() {
       const number = position + 1;
       const group = groups[index];
 
-      result[`الإحداثي الشمالي (N) ${number}`] =
-        group.north?.value || "";
-
-      result[`الإحداثي الشرقي (E) ${number}`] =
-        group.east?.value || "";
+      result[`الإحداثي الشمالي (N) ${number}`] = group.north?.value || "";
+      result[`الإحداثي الشرقي (E) ${number}`] = group.east?.value || "";
     });
 
     return result;
   }
 
-/* ============================================================
-   * قراءة وتحليل بيانات العقار من Clipboard
+  /* ============================================================
+   * وظائف الصك المتعدد (Multi-Deed)
+   * ============================================================ */
+
+  function extractMultiDeedData() {
+    const data = {
+      basic: {},
+      directions: []
+    };
+
+    // 1. الحقول الأساسية الـ 5
+    const basicMappings = [
+      ["lot", "رقم القطعة بالمخطط"],
+      ["plan", "رقم المخطط"],
+      ["block", "رقم البلوك"],
+      ["zone", "النطاق الجغرافي لإسقاط مركاتور المستعرض العالمي"]
+    ];
+
+    for (const [key, placeholder] of basicMappings) {
+      data.basic[key] = getValueByPlaceholder(placeholder).value;
+    }
+
+    const deedBoundary = getValueByPlaceholder("الحدود حسب الصك", "directions.");
+    data.basic["deedBoundary"] = deedBoundary.value;
+
+    // 2. حقول الاتجاهات (4 حقول لكل اتجاه)
+    for (let i = 0; i < 4; i++) {
+      const dirNumber = i + 1;
+
+      // اتجاه الصف
+      let directionVal = "";
+      const hidden = document.querySelector(`input[name="directions.${i}.direction"]`);
+      if (hidden) {
+        const parent = hidden.closest("div") || hidden.parentElement;
+        const selectValue = parent?.querySelector('[class*="singleValue"]');
+        directionVal = cleanText(selectValue?.textContent || "");
+        if (!directionVal) {
+          directionVal = getInputValue(hidden);
+        }
+      }
+
+      // الحدود حسب الصك
+      const deedBoundryInput = document.querySelector(`input[name="directions.${i}.deedBoundry"]`);
+      const deedBoundryVal = deedBoundryInput ? getInputValue(deedBoundryInput) : "";
+
+      // الأبعاد حسب الصك (طول الضلع)
+      const deedLengthInput = document.querySelector(`input[name="directions.${i}.deedDimentionLength"]`);
+      const deedLengthVal = deedLengthInput ? getInputValue(deedLengthInput) : "";
+
+      // الأبعاد حسب الصك (المجموع)
+      const deedTotalInput = document.querySelector(`input[name="directions.${i}.deedDimentionTotal"]`);
+      const deedTotalVal = deedTotalInput ? getInputValue(deedTotalInput) : "";
+
+      data.directions.push({
+        index: i,
+        direction: directionVal,
+        deedBoundry: deedBoundryVal,
+        deedDimentionLength: deedLengthVal,
+        deedDimentionTotal: deedTotalVal
+      });
+    }
+
+    return data;
+  }
+
+  async function copyMultiDeedToClipboard() {
+    const data = extractMultiDeedData();
+    const payload = `${CONFIG.multiDeedHeader}\n${JSON.stringify(data, null, 2)}`;
+
+    try {
+      await navigator.clipboard.writeText(payload);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = payload;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+
+    return data;
+  }
+
+  async function fillMultiDeedFromClipboard() {
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (e) {
+      throw new Error("تعذرت قراءة الحافظة، يرجى منح الإذن.");
+    }
+
+    if (!text || !text.includes(CONFIG.multiDeedHeader)) {
+      throw new Error("النص الموجود في الحافظة ليس بيانات صك متعدد صالحة.");
+    }
+
+    const jsonPart = text.replace(CONFIG.multiDeedHeader, "").trim();
+    let data;
+    try {
+      data = JSON.parse(jsonPart);
+    } catch {
+      throw new Error("تنسيق بيانات الصك المتعدد غير صالح.");
+    }
+
+    if (!data.basic || !Array.isArray(data.directions)) {
+      throw new Error("هيكل بيانات الصك المتعدد غير مطابق.");
+    }
+
+    // 1. تعبئة الحقول الأساسية الـ 5
+    const basicMappings = [
+      ["lot", "رقم القطعة بالمخطط"],
+      ["plan", "رقم المخطط"],
+      ["block", "رقم البلوك"],
+      ["zone", "النطاق الجغرافي لإسقاط مركاتور المستعرض العالمي"]
+    ];
+
+    for (const [key, placeholder] of basicMappings) {
+      const el = findByPlaceholder(placeholder);
+      if (el && data.basic[key] !== undefined) {
+        setElementValue(el, data.basic[key]);
+      }
+    }
+
+    const deedBoundaryEl = findByPlaceholder("الحدود حسب الصك", "directions.");
+    if (deedBoundaryEl && data.basic.deedBoundary !== undefined) {
+      setElementValue(deedBoundaryEl, data.basic.deedBoundary);
+    }
+
+    // 2. تعبئة حقول الاتجاهات الموجودة فقط دون إنشاء صفوف جديدة
+    const directionCodeMap = {
+      "الشمالية": "1",
+      "الجنوبية": "2",
+      "الشرقية": "3",
+      "الغربية": "4"
+    };
+
+    for (let i = 0; i < data.directions.length; i++) {
+      const dirData = data.directions[i];
+
+      // تعبئة الاتجاه إذا وجد حقل الإدخال
+      if (dirData.direction) {
+        const rawCode = directionCodeMap[dirData.direction] || dirData.direction;
+        const selectInput = document.getElementById(`react-select-${5 + i}-input`);
+        if (selectInput) {
+          await setSelectValue(selectInput, rawCode);
+        }
+      }
+
+      // الحدود حسب الصك
+      const deedBoundryInput = document.querySelector(`input[name="directions.${i}.deedBoundry"]`);
+      if (deedBoundryInput && dirData.deedBoundry !== undefined) {
+        setElementValue(deedBoundryInput, dirData.deedBoundry);
+      }
+
+      // الأبعاد حسب الصك (طول الضلع)
+      const deedLengthInput = document.querySelector(`input[name="directions.${i}.deedDimentionLength"]`);
+      if (deedLengthInput && dirData.deedDimentionLength !== undefined) {
+        setElementValue(deedLengthInput, dirData.deedDimentionLength);
+      }
+
+      // الأبعاد حسب الصك (المجموع)
+      const deedTotalInput = document.querySelector(`input[name="directions.${i}.deedDimentionTotal"]`);
+      if (deedTotalInput && dirData.deedDimentionTotal !== undefined) {
+        setElementValue(deedTotalInput, dirData.deedDimentionTotal);
+      }
+    }
+
+    return true;
+  }
+
+  /* ============================================================
+   * قراءة وتعبئة بيانات العقار العادية (Excel/Auto)
    * ============================================================ */
 
   async function readPropertyClipboard() {
@@ -778,10 +845,7 @@ function extractDeedData() {
 
     function getValue(label) {
       const line = lines.find(line =>
-        new RegExp(
-          "^" + label + "\\s+",
-          "i"
-        ).test(line)
+        new RegExp("^" + label + "\\s+", "i").test(line)
       );
 
       if (!line) return "";
@@ -840,15 +904,11 @@ function extractDeedData() {
     }
 
     if (!coordinates.length) {
-      throw new Error(
-        "لم يتم العثور على الإحداثيات في نص الحافظة."
-      );
+      throw new Error("لم يتم العثور على الإحداثيات في نص الحافظة.");
     }
 
     if (!directions.length) {
-      throw new Error(
-        "لم يتم العثور على ملخص الاتجاهات في نص الحافظة."
-      );
+      throw new Error("لم يتم العثور على ملخص الاتجاهات في نص الحافظة.");
     }
 
     return {
@@ -857,101 +917,40 @@ function extractDeedData() {
       block: getValue("BLOCK"),
       zone: getValue("ZONE"),
       area: areaText.match(/-?\d+(?:\.\d+)?/)?.[0] || "",
-      totalLength:
-        totalLengthText.match(/-?\d+(?:\.\d+)?/)?.[0] || "",
+      totalLength: totalLengthText.match(/-?\d+(?:\.\d+)?/)?.[0] || "",
       coordinates,
       directions
     };
   }
 
-async function fillPropertyData() {
+  async function fillPropertyData() {
     const PROPERTY_FILL_DATA = await readPropertyClipboard();
 
-    const results = [];
-    const sleep = ms =>
-      new Promise(resolve => setTimeout(resolve, ms));
-
-function setValue(el, value) {
-      if (!el) return false;
-
-      const proto = el.tagName === "TEXTAREA"
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-
-      const setter =
-        Object.getOwnPropertyDescriptor(proto, "value")?.set;
-
-      if (!setter) return false;
-
-      setter.call(el, String(value));
-
-      el.dispatchEvent(new Event("input", {
-        bubbles: true
-      }));
-
-      el.dispatchEvent(new Event("change", {
-        bubbles: true
-      }));
-
-      results.push({
-        field: el.name || el.placeholder || "حقل",
-        value: String(value),
-        found: true
-      });
-
-      return true;
-    }
-
     function fillByPlaceholder(placeholder, value) {
-      const el = [
-        ...document.querySelectorAll(
-          "input:not([type=hidden]), textarea"
-        )
-      ].find(input =>
-        input.placeholder?.trim() === placeholder
-      );
-
-      if (!el) {
-        results.push({
-          field: placeholder,
-          found: false
-        });
-        return false;
-      }
-
-      return setValue(el, value);
+      const el = findByPlaceholder(placeholder);
+      if (!el) return false;
+      return setElementValue(el, value);
     }
 
     // 1. البيانات الأساسية
     fillByPlaceholder("رقم القطعة بالمخطط", PROPERTY_FILL_DATA.lot);
     fillByPlaceholder("رقم المخطط", PROPERTY_FILL_DATA.plan);
     fillByPlaceholder("رقم البلوك", PROPERTY_FILL_DATA.block);
-
     fillByPlaceholder(
       "النطاق الجغرافي لإسقاط مركاتور المستعرض العالمي",
       PROPERTY_FILL_DATA.zone
     );
 
-// 2. المساحة
-// 2. المساحة باستخدام Selector الحقل المحدد
+    // 2. المساحة
     const areaField = document.querySelector(
       'div.transition-all.flex-row-reverse.duration-700 > div.w-full.p-8.transition-all.duration-700:nth-of-type(2) > div.max-w-8xl.font-ibm-sans.inner-container.relative > div.mt-12:nth-of-type(6) > div.container.mx-auto.px-2.mt-12:nth-of-type(6) > div:nth-of-type(2) > div.flex.flex-col.w-full.border.bottom-2.border-\\[\\#dce3e6\\] > div.rounded-md.false > div.p-3 > div.space-y-10.mx-auto > div:nth-of-type(2) > div.grid.grid-cols-1.md\\:grid-cols-2.gap-6 > div > input'
     );
 
     if (areaField && PROPERTY_FILL_DATA.area) {
-      setValue(areaField, PROPERTY_FILL_DATA.area);
-    } else {
-      results.push({
-        field: "المساحة",
-        found: false
-      });
-
-      console.warn(
-        "لم يتم العثور على حقل المساحة باستخدام Selector المحدد."
-      );
+      setElementValue(areaField, PROPERTY_FILL_DATA.area);
     }
 
-// 3. إضافة صفوف الإحداثيات المطلوبة فقط
+    // 3. إضافة صفوف الإحداثيات المطلوبة فقط
     for (let attempt = 0; attempt < 4; attempt++) {
       const count = document.querySelectorAll(
         'input[name^="coordinates."][name$=".northCordinate"]'
@@ -959,60 +958,31 @@ function setValue(el, value) {
 
       if (count >= PROPERTY_FILL_DATA.coordinates.length) break;
 
-      const addButton = [
-        ...document.querySelectorAll("button")
-      ].find(el =>
+      const addButton = [...document.querySelectorAll("button")].find(el =>
         el.innerText.includes("إضافة المزيد من الإحداثيات")
       );
 
       if (!addButton) break;
 
       addButton.click();
-
-      // انتظار قصير لإتاحة تحديث React
-      await sleep(100);
+      await wait(100);
     }
 
     // 4. تعبئة الإحداثيات
     for (let i = 0; i < PROPERTY_FILL_DATA.coordinates.length; i++) {
       const point = PROPERTY_FILL_DATA.coordinates[i];
+      const north = document.querySelector(`input[name="coordinates.${i}.northCordinate"]`);
+      const east = document.querySelector(`input[name="coordinates.${i}.eastCordinate"]`);
 
-      const north = document.querySelector(
-        `input[name="coordinates.${i}.northCordinate"]`
-      );
-
-      const east = document.querySelector(
-        `input[name="coordinates.${i}.eastCordinate"]`
-      );
-
-      if (north) {
-        setValue(north, point.north);
-      } else {
-        results.push({
-          field: `الإحداثي الشمالي ${i + 1}`,
-          found: false
-        });
-      }
-
-      if (east) {
-        setValue(east, point.east);
-      } else {
-        results.push({
-          field: `الإحداثي الشرقي ${i + 1}`,
-          found: false
-        });
-      }
+      if (north) setElementValue(north, point.north);
+      if (east) setElementValue(east, point.east);
     }
 
-// 5. قراءة الاتجاهات والأطوال من Clipboard مباشرة
-
+    // 5. قراءة الاتجاهات والأطوال من Clipboard
     let clipboardText = "";
-
     try {
       clipboardText = await navigator.clipboard.readText();
-    } catch {
-      // إذا تعذرت القراءة، لن تتم تعبئة الاتجاهات بقيم تخمينية
-    }
+    } catch {}
 
     const directionMap = {
       NORTH: "1",
@@ -1022,13 +992,10 @@ function setValue(el, value) {
     };
 
     const directionRows = [];
-    const summaryMatch = clipboardText.match(
-      /DIRECTION SUMMARY([\s\S]*?)(?:$)/i
-    );
+    const summaryMatch = clipboardText.match(/DIRECTION SUMMARY([\s\S]*?)(?:$)/i);
 
     if (summaryMatch) {
       const lines = summaryMatch[1].split(/\r?\n/);
-
       for (const line of lines) {
         const match = line.trim().match(
           /^(NORTH|EAST|SOUTH|WEST)\s+([\d,]+(?:\.\d+)?)\s*m?\s*$/i
@@ -1046,75 +1013,27 @@ function setValue(el, value) {
 
     for (let i = 0; i < directionRows.length; i++) {
       const d = directionRows[i];
-
-      const selectInput = document.getElementById(
-        `react-select-${5 + i}-input`
-      );
-
-      const lengthField = document.querySelector(
-        `input[name="directions.${i}.asBuiltDimentionLength"]`
-      );
-
-      const totalField = document.querySelector(
-        `input[name="directions.${i}.asBuiltDimentionTotal"]`
-      );
+      const selectInput = document.getElementById(`react-select-${5 + i}-input`);
+      const lengthField = document.querySelector(`input[name="directions.${i}.asBuiltDimentionLength"]`);
+      const totalField = document.querySelector(`input[name="directions.${i}.asBuiltDimentionTotal"]`);
 
       if (selectInput) {
-        selectInput.focus();
-
-        const setter = Object.getOwnPropertyDescriptor(
-          HTMLInputElement.prototype,
-          "value"
-        ).set;
-
-        setter.call(selectInput, d.number);
-
-        selectInput.dispatchEvent(new Event("input", {
-          bubbles: true
-        }));
-
-        await sleep(250);
-
-        selectInput.dispatchEvent(new KeyboardEvent("keydown", {
-          key: "ArrowDown",
-          code: "ArrowDown",
-          bubbles: true
-        }));
-
-        selectInput.dispatchEvent(new KeyboardEvent("keydown", {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-          bubbles: true
-        }));
-
-        selectInput.dispatchEvent(new KeyboardEvent("keyup", {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-          bubbles: true
-        }));
-
-        await sleep(100);
+        await setSelectValue(selectInput, d.number);
       }
 
-      if (lengthField) setValue(lengthField, d.length);
-      if (totalField) setValue(totalField, d.length);
+      if (lengthField) setElementValue(lengthField, d.length);
+      if (totalField) setElementValue(totalField, d.length);
     }
 
-
-
-    return results;
+    return true;
   }
 
   /* ============================================================
    * البحث عن القيم الظاهرة المهمة
    * ============================================================ */
+
   function extractVisibleExtraData() {
     const result = {};
-
     const paragraphs = [...document.querySelectorAll("p")];
 
     for (const p of paragraphs) {
@@ -1122,34 +1041,14 @@ function setValue(el, value) {
 
       if (text === "اسم المدينة") {
         const parent = p.parentElement;
-
-        const value = cleanText(
-          parent?.textContent
-            ?.replace("اسم المدينة", "")
-        );
-
-        if (
-          value &&
-          value !== "اسم المدينة"
-        ) {
-          result.__visibleCity = value;
-        }
+        const value = cleanText(parent?.textContent?.replace("اسم المدينة", ""));
+        if (value && value !== "اسم المدينة") result.__visibleCity = value;
       }
 
       if (text === "اسم الحي") {
         const parent = p.parentElement;
-
-        const value = cleanText(
-          parent?.textContent
-            ?.replace("اسم الحي", "")
-        );
-
-        if (
-          value &&
-          value !== "اسم الحي"
-        ) {
-          result.__visibleDistrict = value;
-        }
+        const value = cleanText(parent?.textContent?.replace("اسم الحي", ""));
+        if (value && value !== "اسم الحي") result.__visibleDistrict = value;
       }
     }
 
@@ -1157,123 +1056,63 @@ function setValue(el, value) {
   }
 
   /* ============================================================
-   * استخراج كل البيانات
+   * استخراج كل البيانات للتقرير
    * ============================================================ */
 
   async function extractAllData() {
     await wait(300);
 
     const data = {};
-
     data["رقم الطلب"] = extractApplicationNumber();
 
-    Object.assign(
-      data,
-      extractBasicData()
-    );
-
-    Object.assign(
-      data,
-      extractDeedData()
-    );
-
-    Object.assign(
-      data,
-      extractOwnerData()
-    );
-
-    Object.assign(
-      data,
-      extractDirections()
-    );
-
-    Object.assign(
-      data,
-      extractCoordinates()
-    );
+    Object.assign(data, extractBasicData());
+    Object.assign(data, extractDeedData());
+    Object.assign(data, extractOwnerData());
+    Object.assign(data, extractDirections());
+    Object.assign(data, extractCoordinates());
 
     const extra = extractVisibleExtraData();
-
-    if (
-      (!data["اسم المدينة"] || data["اسم المدينة"] === "N/A") &&
-      extra.__visibleCity
-    ) {
+    if ((!data["اسم المدينة"] || data["اسم المدينة"] === "N/A") && extra.__visibleCity) {
       data["اسم المدينة"] = extra.__visibleCity;
     }
 
-    if (
-      (!data["اسم الحي"] || data["اسم الحي"] === "N/A") &&
-      extra.__visibleDistrict
-    ) {
+    if ((!data["اسم الحي"] || data["اسم الحي"] === "N/A") && extra.__visibleDistrict) {
       data["اسم الحي"] = extra.__visibleDistrict;
     }
 
     const finalData = {};
-
     for (const field of FINAL_FIELD_ORDER) {
-      const value = data[field];
-
-      finalData[field] =
-        cleanText(value) || "N/A";
+      finalData[field] = cleanText(data[field]) || "N/A";
     }
 
-    /* ========================================================
-     * إضافة المالكين بشكل ديناميكي
-     * ======================================================== */
-
     const ownerNumbers = new Set();
-
     Object.keys(data).forEach(key => {
-      const match = key.match(
-        /^(اسم المالك|رقم الهوية) (\d+)$/
-      );
-
-      if (match) {
-        ownerNumbers.add(Number(match[2]));
-      }
+      const match = key.match(/^(اسم المالك|رقم الهوية) (\d+)$/);
+      if (match) ownerNumbers.add(Number(match[2]));
     });
 
     [...ownerNumbers]
       .sort((a, b) => a - b)
       .forEach(number => {
-        finalData[`اسم المالك ${number}`] =
-          cleanText(
-            data[`اسم المالك ${number}`]
-          ) || "N/A";
-
-        finalData[`رقم الهوية ${number}`] =
-          cleanText(
-            data[`رقم الهوية ${number}`]
-          ) || "N/A";
+        finalData[`اسم المالك ${number}`] = cleanText(data[`اسم المالك ${number}`]) || "N/A";
+        finalData[`رقم الهوية ${number}`] = cleanText(data[`رقم الهوية ${number}`]) || "N/A";
       });
 
-    const coordinateKeys = Object.keys(data)
-      .filter(key =>
-        /^الإحداثي (الشمالي \(N\)|الشرقي \(E\)) \d+$/.test(key)
-      );
+    const coordinateKeys = Object.keys(data).filter(key =>
+      /^الإحداثي (الشمالي \(N\)|الشرقي \(E\)) \d+$/.test(key)
+    );
 
     const coordinateNumbers = new Set();
-
     for (const key of coordinateKeys) {
       const match = key.match(/(\d+)$/);
-
-      if (match) {
-        coordinateNumbers.add(Number(match[1]));
-      }
+      if (match) coordinateNumbers.add(Number(match[1]));
     }
 
     [...coordinateNumbers]
       .sort((a, b) => a - b)
       .forEach(number => {
-        finalData[`الإحداثي الشمالي (N) ${number}`] =
-          cleanText(
-            data[`الإحداثي الشمالي (N) ${number}`]
-          ) || "N/A";
-
-        finalData[`الإحداثي الشرقي (E) ${number}`] =
-          cleanText(
-            data[`الإحداثي الشرقي (E) ${number}`]
-          ) || "N/A";
+        finalData[`الإحداثي الشمالي (N) ${number}`] = cleanText(data[`الإحداثي الشمالي (N) ${number}`]) || "N/A";
+        finalData[`الإحداثي الشرقي (E) ${number}`] = cleanText(data[`الإحداثي الشرقي (E) ${number}`]) || "N/A";
       });
 
     return finalData;
@@ -1284,26 +1123,15 @@ function setValue(el, value) {
    * ============================================================ */
 
   async function copyToExcel(data) {
-    const rows = [];
-
-    rows.push([
-      "الحقل",
-      "القيمة"
-    ]);
+    const rows = [["الحقل", "القيمة"]];
 
     for (const [field, value] of Object.entries(data)) {
       if (Array.isArray(value)) {
         for (const item of value) {
-          rows.push([
-            String(field || ""),
-            String(item || "")
-          ]);
+          rows.push([String(field || ""), String(item || "")]);
         }
       } else {
-        rows.push([
-          String(field || ""),
-          String(value || "")
-        ]);
+        rows.push([String(field || ""), String(value || "")]);
       }
     }
 
@@ -1323,17 +1151,12 @@ function setValue(el, value) {
       await navigator.clipboard.writeText(text);
     } catch (e) {
       const textarea = document.createElement("textarea");
-
       textarea.value = text;
       textarea.style.position = "fixed";
       textarea.style.left = "-9999px";
-
       document.body.appendChild(textarea);
-
       textarea.select();
-
       document.execCommand("copy");
-
       textarea.remove();
     }
 
@@ -1341,21 +1164,18 @@ function setValue(el, value) {
   }
 
   /* ============================================================
-   * نافذة صغيرة للنتيجة
+   * نافذة التنبيه والإشعارات
    * ============================================================ */
 
-  function showResult(data) {
-    const old = document.getElementById(
-      "property-extractor-result"
-    );
-
-    if (old) {
-      old.remove();
-    }
+  function showToast(title, message, isSuccess = true) {
+    const old = document.getElementById("property-extractor-result");
+    if (old) old.remove();
 
     const box = document.createElement("div");
-
     box.id = "property-extractor-result";
+
+    const borderColor = isSuccess ? "#16a34a" : "#dc2626";
+    const headerColor = isSuccess ? "#16a34a" : "#dc2626";
 
     Object.assign(box.style, {
       position: "fixed",
@@ -1366,7 +1186,7 @@ function setValue(el, value) {
       color: "#222",
       padding: "14px 18px",
       borderRadius: "12px",
-      border: "2px solid #16a34a",
+      border: `2px solid ${borderColor}`,
       boxShadow: "0 10px 30px rgba(0,0,0,.2)",
       fontFamily: "Arial,sans-serif",
       direction: "rtl",
@@ -1374,93 +1194,45 @@ function setValue(el, value) {
       fontSize: "14px"
     });
 
-    const values = Object.values(data);
-
-    const valid = values.filter(
-      value =>
-        value &&
-        value !== "N/A"
-    ).length;
-
     box.innerHTML = `
-      <div style="
-        font-weight:bold;
-        color:#16a34a;
-        font-size:16px;
-        margin-bottom:6px;
-      ">
-        ✅ تم استخراج البيانات
+      <div style="font-weight:bold; color:${headerColor}; font-size:16px; margin-bottom:6px;">
+        ${isSuccess ? "✅" : "❌"} ${title}
       </div>
-
-      <div>
-        تم التعرف على <b>${valid}</b> قيمة
-      </div>
-
-      <div style="
-        margin-top:6px;
-        color:#666;
-        font-size:12px;
-      ">
-        البيانات منسوخة إلى الحافظة
-      </div>
+      <div>${message}</div>
     `;
 
     document.body.appendChild(box);
+    setTimeout(() => { box.remove(); }, 3500);
+  }
 
-    setTimeout(() => {
-      box.remove();
-    }, 3500);
+  function showResult(data) {
+    const values = Object.values(data);
+    const valid = values.filter(value => value && value !== "N/A").length;
+    showToast("تم استخراج التقرير", `تم التعرف على <b>${valid}</b> قيمة ونسخها للحافظة بصيغة Excel`, true);
   }
 
   /* ============================================================
-   * الزر
+   * الزر العائم وتوزيع الوظائف الأربع
    * ============================================================ */
 
   function createButton() {
+    if (!isExtractionPage()) return;
+    if (document.getElementById(CONFIG.containerId)) return;
 
-    /* ========================================================
-     * إظهار الزر فقط في إحدى صفحتي الاستخراج
-     * ======================================================== */
-
-    if (!isExtractionPage()) {
-      return;
-    }
-
-    if (
-      document.getElementById(CONFIG.containerId)
-    ) {
-      return;
-    }
-
-    const container =
-      document.createElement("div");
-
-    container.id =
-      CONFIG.containerId;
+    const container = document.createElement("div");
+    container.id = CONFIG.containerId;
 
     Object.assign(container.style, {
       position: "fixed",
-      left:
-        localStorage.getItem(
-          "propertyExtractorLeft"
-        ) || "20px",
-      bottom:
-        localStorage.getItem(
-          "propertyExtractorBottom"
-        ) || "20px",
+      left: localStorage.getItem("propertyExtractorLeft") || "20px",
+      bottom: localStorage.getItem("propertyExtractorBottom") || "20px",
       zIndex: "2147483647"
     });
 
-    const button =
-      document.createElement("button");
-
-    button.id =
-      CONFIG.buttonId;
-
+    const button = document.createElement("button");
+    button.id = CONFIG.buttonId;
     button.textContent = "📥";
-
-    button.title =
-      "اضغط لاستخراج البيانات ونسخها إلى Excel";
+    button.title = "كلك يسار: استخراج تقرير كامل\nCtrl + كلك يسار: نسخ الصك المتعدد\nكلك يمين: تعبئة العقار\nCtrl + كلك يمين: تعبئة الصك المتعدد";
 
     Object.assign(button.style, {
       width: "54px",
@@ -1474,11 +1246,12 @@ function setValue(el, value) {
       boxShadow: "0 4px 15px rgba(0,0,0,.2)",
       display: "flex",
       alignItems: "center",
-      justifyContent: "center"
+      justifyContent: "center",
+      userSelect: "none"
     });
 
     /* ========================================================
-     * السحب
+     * السحب والإفلات
      * ======================================================== */
 
     let dragging = false;
@@ -1488,162 +1261,100 @@ function setValue(el, value) {
     let startLeft = 0;
     let startBottom = 0;
 
-    button.addEventListener(
-      "pointerdown",
-      event => {
-        if (event.button !== 0) return;
+    button.addEventListener("pointerdown", event => {
+      if (event.button !== 0) return;
 
-        dragging = true;
-        moved = false;
+      dragging = true;
+      moved = false;
+      startX = event.clientX;
+      startY = event.clientY;
 
-        startX = event.clientX;
-        startY = event.clientY;
+      const rect = container.getBoundingClientRect();
+      startLeft = rect.left;
+      startBottom = window.innerHeight - rect.bottom;
 
-        const rect =
-          container.getBoundingClientRect();
+      button.style.cursor = "grabbing";
+      button.setPointerCapture(event.pointerId);
+    });
 
-        startLeft = rect.left;
-        startBottom =
-          window.innerHeight -
-          rect.bottom;
+    button.addEventListener("pointermove", event => {
+      if (!dragging) return;
 
-        button.style.cursor = "grabbing";
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
 
-        button.setPointerCapture(
-          event.pointerId
-        );
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        moved = true;
       }
-    );
 
-    button.addEventListener(
-      "pointermove",
-      event => {
-        if (!dragging) return;
+      let left = startLeft + dx;
+      let bottom = startBottom - dy;
 
-        const dx =
-          event.clientX - startX;
+      left = Math.max(0, Math.min(left, window.innerWidth - container.offsetWidth));
+      bottom = Math.max(0, Math.min(bottom, window.innerHeight - container.offsetHeight));
 
-        const dy =
-          event.clientY - startY;
+      container.style.left = `${left}px`;
+      container.style.bottom = `${bottom}px`;
+    });
 
-        if (
-          Math.abs(dx) > 4 ||
-          Math.abs(dy) > 4
-        ) {
-          moved = true;
-        }
+    button.addEventListener("pointerup", event => {
+      if (!dragging) return;
 
-        let left =
-          startLeft + dx;
+      dragging = false;
+      button.style.cursor = "grab";
 
-        let bottom =
-          startBottom - dy;
+      const rect = container.getBoundingClientRect();
+      localStorage.setItem("propertyExtractorLeft", `${rect.left}px`);
+      localStorage.setItem("propertyExtractorBottom", `${window.innerHeight - rect.bottom}px`);
 
-        left = Math.max(
-          0,
-          Math.min(
-            left,
-            window.innerWidth -
-              container.offsetWidth
-          )
-        );
+      try {
+        button.releasePointerCapture(event.pointerId);
+      } catch {}
+    });
 
-        bottom = Math.max(
-          0,
-          Math.min(
-            bottom,
-            window.innerHeight -
-              container.offsetHeight
-          )
-        );
-
-        container.style.left =
-          `${left}px`;
-
-        container.style.bottom =
-          `${bottom}px`;
-      }
-    );
-
-    button.addEventListener(
-      "pointerup",
-      event => {
-        if (!dragging) return;
-
-        dragging = false;
-
-        button.style.cursor = "grab";
-
-        const rect =
-          container.getBoundingClientRect();
-
-        localStorage.setItem(
-          "propertyExtractorLeft",
-          `${rect.left}px`
-        );
-
-        localStorage.setItem(
-          "propertyExtractorBottom",
-          `${window.innerHeight - rect.bottom}px`
-        );
-
-        try {
-          button.releasePointerCapture(
-            event.pointerId
-          );
-        } catch {}
-      }
-    );
-
-/* ========================================================
-     * الضغط الشمال: استخراج البيانات
+    /* ========================================================
+     * الوظيفة 1 & 2: كلك يسار (تقرير كامل) أو Ctrl + كلك يسار (صك متعدد)
      * ======================================================== */
 
-    button.addEventListener(
-      "click",
-      async () => {
-        if (moved) {
-          moved = false;
-          return;
+    button.addEventListener("click", async (event) => {
+      if (moved) {
+        moved = false;
+        return;
+      }
+
+      if (button.disabled) return;
+      button.disabled = true;
+      button.textContent = "⏳";
+
+      try {
+        // الوظيفة 2: نسخ الصك المتعدد
+        if (event.ctrlKey) {
+          if (!isPropertyDataPage()) {
+            throw new Error("يجب فتح صفحة بيانات العقار لنسخ الصك المتعدد.");
+          }
+          await copyMultiDeedToClipboard();
+          showToast("تم نسخ الصك المتعدد", "تم حفظ الـ 21 حقلاً في الحافظة بنجاح.", true);
         }
-
-        if (button.disabled) return;
-
-        button.disabled = true;
-        button.textContent = "⏳";
-
-        try {
+        // الوظيفة 1: استخراج التقرير بالكامل (Excel)
+        else {
           if (isDeedDetailsPage()) {
             const deedData = extractDeedData();
             const ownerData = extractOwnerData();
-
             const data = {
-              "رقم صك وزارة العدل":
-                cleanText(deedData["رقم صك وزارة العدل"] || "") || "N/A",
-
-              "تاريخ الصك":
-                cleanText(deedData["تاريخ الصك"] || "") || "N/A"
+              "رقم صك وزارة العدل": cleanText(deedData["رقم صك وزارة العدل"] || "") || "N/A",
+              "تاريخ الصك": cleanText(deedData["تاريخ الصك"] || "") || "N/A"
             };
 
             const ownerNumbers = new Set();
-
             Object.keys(ownerData).forEach(key => {
-              const match = key.match(
-                /^(اسم المالك|رقم الهوية) (\d+)$/
-              );
-
+              const match = key.match(/^(اسم المالك|رقم الهوية) (\d+)$/);
               if (match) ownerNumbers.add(Number(match[2]));
             });
 
-            [...ownerNumbers]
-              .sort((a, b) => a - b)
-              .forEach(number => {
-                data[`اسم المالك ${number}`] =
-                  cleanText(ownerData[`اسم المالك ${number}`] || "") || "N/A";
-
-                data[`رقم الهوية ${number}`] =
-                  cleanText(ownerData[`رقم الهوية ${number}`] || "") || "N/A";
-              });
+            [...ownerNumbers].sort((a, b) => a - b).forEach(number => {
+              data[`اسم المالك ${number}`] = cleanText(ownerData[`اسم المالك ${number}`] || "") || "N/A";
+              data[`رقم الهوية ${number}`] = cleanText(ownerData[`رقم الهوية ${number}`] || "") || "N/A";
+            });
 
             await copyToExcel(data);
             showResult(data);
@@ -1660,63 +1371,23 @@ function setValue(el, value) {
               ) {
                 continue;
               }
-
               data[field] = value;
             }
 
-            const count = Object.values(data).filter(
-              value => value && value !== "N/A"
-            ).length;
-
-            if (!count) {
-              throw new Error("لم يتم العثور على أي بيانات.");
-            }
+            const count = Object.values(data).filter(v => v && v !== "N/A").length;
+            if (!count) throw new Error("لم يتم العثور على أي بيانات.");
 
             await copyToExcel(data);
             showResult(data);
           } else {
-            throw new Error(
-              "هذه الصفحة ليست صفحة تفاصيل الصك أو صفحة بيانات العقار."
-            );
+            throw new Error("هذه الصفحة ليست صفحة صك أو صفحة بيانات عقار.");
           }
-
-    button.textContent = "✅";
-          button.style.color = "#16a34a";
-        } catch {
-          button.textContent = "❌";
-          button.style.color = "#dc2626";
-        } finally {
-          setTimeout(() => {
-            button.textContent = "📥";
-            button.style.color = "#087f5b";
-            button.disabled = false;
-          }, 2500);
-        }
-      }
-    );
-
-    /* ========================================================
-     * الضغط اليمين: تعبئة بيانات العقار
-     * ======================================================== */
-
-   button.addEventListener("contextmenu", async event => {
-      event.preventDefault();
-
-      if (button.disabled || !isPropertyDataPage()) return;
-
-      button.disabled = true;
-      button.textContent = "⏳";
-
-try {
-        await fillPropertyData();
-
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
         }
 
         button.textContent = "✅";
         button.style.color = "#16a34a";
-      } catch {
+      } catch (err) {
+        showToast("فشلت العملية", err.message || "حدث خطأ أثناء التنفيذ.", false);
         button.textContent = "❌";
         button.style.color = "#dc2626";
       } finally {
@@ -1724,7 +1395,50 @@ try {
           button.textContent = "📥";
           button.style.color = "#087f5b";
           button.disabled = false;
-        }, 1200);
+        }, 2200);
+      }
+    });
+
+    /* ========================================================
+     * الوظيفة 3 & 4: كلك يمين (تعبئة عقار) أو Ctrl + كلك يمين (تعبئة صك متعدد)
+     * ======================================================== */
+
+    button.addEventListener("contextmenu", async (event) => {
+      event.preventDefault();
+
+      if (button.disabled || !isPropertyDataPage()) return;
+
+      button.disabled = true;
+      button.textContent = "⏳";
+
+      try {
+        // الوظيفة 4: تعبئة الصك المتعدد
+        if (event.ctrlKey) {
+          await fillMultiDeedFromClipboard();
+          showToast("تمت التعبئة بنجاح", "تمت تعبئة حقول الصك المتعدد من الحافظة.", true);
+        }
+        // الوظيفة 3: تعبئة بيانات العقار العادية
+        else {
+          await fillPropertyData();
+          showToast("تمت التعبئة بنجاح", "تمت تعبئة بيانات العقار والإحداثيات.", true);
+        }
+
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+
+        button.textContent = "✅";
+        button.style.color = "#16a34a";
+      } catch (err) {
+        showToast("فشل في التعبئة", err.message || "حدث خطأ أثناء قراءة الحافظة وتعبئة البيانات.", false);
+        button.textContent = "❌";
+        button.style.color = "#dc2626";
+      } finally {
+        setTimeout(() => {
+          button.textContent = "📥";
+          button.style.color = "#087f5b";
+          button.disabled = false;
+        }, 1500);
       }
     });
 
@@ -1733,39 +1447,18 @@ try {
   }
 
   /* ============================================================
-   * تحديد صفحات الاستخراج
+   * التحقق من الصفحات والمراقبة التلقائية
    * ============================================================ */
 
   function isDeedDetailsPage() {
-    /* ========================================================
-     * صفحة تفاصيل الصك
-     *
-     * نتحقق من وجود عناصر صفحة الصك نفسها،
-     * وليس من قيمة واحدة فقط.
-     * ======================================================== */
-
-    const deedTable = document.querySelector(
-      "table.borderTable-new"
-    );
-
+    const deedTable = document.querySelector("table.borderTable-new");
     const deedData = extractDeedData();
     const ownerData = extractOwnerData();
 
-    const deedNumber = cleanText(
-      deedData["رقم صك وزارة العدل"] || ""
-    );
-
-    const deedDate = cleanText(
-      deedData["تاريخ الصك"] || ""
-    );
-
-    const ownerName = cleanText(
-      ownerData["اسم المالك 1"] || ""
-    );
-
-    const ownerIdentity = cleanText(
-      ownerData["رقم الهوية 1"] || ""
-    );
+    const deedNumber = cleanText(deedData["رقم صك وزارة العدل"] || "");
+    const deedDate = cleanText(deedData["تاريخ الصك"] || "");
+    const ownerName = cleanText(ownerData["اسم المالك 1"] || "");
+    const ownerIdentity = cleanText(ownerData["رقم الهوية 1"] || "");
 
     return (
       !!deedTable &&
@@ -1777,13 +1470,6 @@ try {
   }
 
   function isPropertyDataPage() {
-    /* ========================================================
-     * صفحة بيانات العقار
-     *
-     * نعتمد على وجود حقول العقار الموجودة أصلًا
-     * في الكود.
-     * ======================================================== */
-
     const propertyFields = [
       "رقم السجل العقاري",
       "رقم القطعة بالمخطط",
@@ -1794,102 +1480,52 @@ try {
     ];
 
     let found = 0;
-
     for (const field of propertyFields) {
-      const result =
-        getValueByPlaceholder(field);
-
-      if (result.element) {
-        found++;
-      }
+      const result = getValueByPlaceholder(field);
+      if (result.element) found++;
     }
 
-    /* يكفي وجود حقلين أو أكثر للتأكد من الصفحة */
     return found >= 2;
   }
 
   function isExtractionPage() {
-    return (
-      isDeedDetailsPage() ||
-      isPropertyDataPage()
-    );
-  }
-
-  function isExtractionPage() {
-    return (
-      isDeedDetailsPage() ||
-      isPropertyDataPage()
-    );
+    return isDeedDetailsPage() || isPropertyDataPage();
   }
 
   function startAutoWatcher() {
-
-    /* ========================================================
-     * مراقبة تغير الصفحة لإظهار/إخفاء الزر فقط
-     *
-     * لا يوجد أي نسخ تلقائي هنا.
-     * ======================================================== */
-
     let updateTimer = null;
 
     const updateButton = () => {
-
       clearTimeout(updateTimer);
-
       updateTimer = setTimeout(() => {
+        const existing = document.getElementById(CONFIG.containerId);
+        const validPage = isExtractionPage();
 
-        const existing =
-          document.getElementById(
-            CONFIG.containerId
-          );
-
-        const validPage =
-          isExtractionPage();
-
-        /* ----------------------------------------------------
-         * إذا كانت الصفحة المطلوبة
-         * والزر غير موجود → أنشئه
-         * ---------------------------------------------------- */
-
-        if (
-          validPage &&
-          !existing
-        ) {
+        if (validPage && !existing) {
           createButton();
           return;
         }
 
-        /* ----------------------------------------------------
-         * إذا خرجنا من الصفحتين
-         * → احذف الزر
-         * ---------------------------------------------------- */
-
-        if (
-          !validPage &&
-          existing
-        ) {
+        if (!validPage && existing) {
           existing.remove();
         }
-
       }, 300);
     };
 
-    const observer =
-      new MutationObserver(() => {
-        updateButton();
-      });
+    const observer = new MutationObserver(() => {
+      updateButton();
+    });
 
     observer.observe(document.body, {
       childList: true,
       subtree: true
     });
 
-    /* فحص أولي */ 
     updateButton();
   }
 
   /* ============================================================
-   * تشغيل
+   * بدء التشغيل
    * ============================================================ */
 
   function init() {
@@ -1899,10 +1535,8 @@ try {
     }
 
     createButton();
-
     startAutoWatcher();
   }
 
   init();
-
 })();
