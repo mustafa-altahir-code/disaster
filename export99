@@ -1,16 +1,239 @@
-التعديلات المطلوبة على الأزرار
-ترتيب الأزرار الفرعية حسب الزاوية:
-0°: تعبئة الصك المتعدد.
-30°: نسخ الصك المتعدد.
-60°: تعبئة العقار.
-90°: استخراج التقرير.
-تغيير الأيقونات: اختيار أيقونات واضحة ومناسبة لوظيفة كل زر، مع الحفاظ على تناسق التصميم وحجم الأزرار.
-تعديل التولتيب (Tooltip):
-يظهر على يمين الزر الفرعي عند تمرير الماوس عليه.
-لا يتداخل مع الأزرار الأخرى.
-يختفي عند مغادرة الزر، مع الحفاظ على استقرار القائمة أثناء التنقل بين الأزرار.
-تخصيص السلوك في صفحة الملاك:
-يظهر الزر الرئيسي فقط، دون فتح القائمة أو إظهار الأزرار الفرعية.
-يؤدي النقر بالزر الأيسر للماوس على الزر الرئيسي إلى تنفيذ استخراج التقرير مباشرة.
-تعطيل فتح القائمة الفرعية في صفحة الملاك فقط، مع الإبقاء على السلوك المعتاد في بقية الصفحات.
-الحفاظ على بقية الوظائف: عدم تغيير منطق استخراج البيانات أو تعبئتها، والاكتفاء بالتعديلات المطلوبة على الواجهة والسلوك.
+  /* ============================================================
+   * الزر العائم والقائمة المنبثقة
+   * ============================================================ */
+
+  function createButton() {
+    if (!isExtractionPage()) return;
+    if (document.getElementById(CONFIG.containerId)) return;
+
+    const isDeedPage = isDeedDetailsPage();
+
+    // 1. الحاوية الثابتة في الركن السفلي الأيسر
+    const container = document.createElement("div");
+    container.id = CONFIG.containerId;
+
+    Object.assign(container.style, {
+      position: "fixed",
+      left: "30px",
+      bottom: "30px",
+      zIndex: "2147483647",
+      width: "50px",
+      height: "50px",
+      userSelect: "none"
+    });
+
+    // 2. الزر الرئيسي الدائم
+    const mainButton = document.createElement("button");
+    mainButton.id = CONFIG.buttonId;
+    mainButton.textContent = isDeedPage ? "📊" : "⚡";
+    mainButton.title = isDeedPage ? "اضغط لاستخراج التقرير" : "خيارات العقار";
+
+    Object.assign(mainButton.style, {
+      width: "50px",
+      height: "50px",
+      borderRadius: "50%",
+      border: "0",
+      background: "#ffffff",
+      color: "#087f5b",
+      fontSize: "22px",
+      cursor: "pointer",
+      boxShadow: "0 4px 14px rgba(0,0,0,0.22)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      position: "relative",
+      zIndex: "5",
+      transition: "transform 0.18s ease"
+    });
+
+    // إذا كانت الصفحة صفحة الملاك / الصك: تنفيذ استخراج التقرير مباشرة عند النقر
+    if (isDeedPage) {
+      mainButton.addEventListener("click", (e) => {
+        e.stopPropagation();
+        executeAction("EXTRACT_REPORT", mainButton);
+      });
+
+      container.appendChild(mainButton);
+      document.body.appendChild(container);
+      return;
+    }
+
+    // ============================================================
+    // في صفحة بيانات العقار: بناء القائمة الدائرية والتولتيب
+    // ============================================================
+
+    // درع تفاعلي لتسهيل حركة الماوس بين الزر الرئيسي والأزرار الفرعية
+    const hitArea = document.createElement("div");
+    Object.assign(hitArea.style, {
+      position: "absolute",
+      left: "-10px",
+      bottom: "-10px",
+      width: "180px",
+      height: "180px",
+      borderRadius: "0 180px 0 0",
+      pointerEvents: "none",
+      zIndex: "1"
+    });
+
+    const radialMenu = document.createElement("div");
+    radialMenu.id = CONFIG.menuId;
+    Object.assign(radialMenu.style, {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      width: "100%",
+      height: "100%",
+      pointerEvents: "none",
+      transition: "opacity 0.2s ease",
+      opacity: "0",
+      zIndex: "3"
+    });
+
+    // توزيع الأزرار حسب الزوايا المطلوبة بدقة
+    const actions = [
+      { id: "FILL_MULTI_DEED", icon: "🧭", label: "تعبئة الصك المتعدد", angle: 0 },
+      { id: "COPY_MULTI_DEED", icon: "📑", label: "نسخ الصك المتعدد", angle: 30 },
+      { id: "FILL_PROPERTY", icon: "📥", label: "تعبئة العقار", angle: 60 },
+      { id: "EXTRACT_REPORT", icon: "📊", label: "استخراج التقرير", angle: 90 }
+    ];
+
+    const radius = 95;
+
+    actions.forEach(action => {
+      const rad = (action.angle * Math.PI) / 180;
+      const x = Math.round(Math.cos(rad) * radius);
+      const y = -Math.round(Math.sin(rad) * radius);
+
+      // حاوية الزر مع التولتيب الخاص به
+      const itemWrapper = document.createElement("div");
+      Object.assign(itemWrapper.style, {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        display: "flex",
+        alignItems: "center",
+        flexDirection: "row", // الزر ثم التولتيب على يمينه
+        transform: "translate(-50%, -50%) scale(0.6)",
+        transition: "transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1)",
+        pointerEvents: "none",
+        zIndex: "10"
+      });
+
+      const btn = document.createElement("button");
+      btn.textContent = action.icon;
+      btn.title = "";
+
+      Object.assign(btn.style, {
+        width: "38px",
+        height: "38px",
+        borderRadius: "50%",
+        border: "1.5px solid #087f5b",
+        background: "#ffffff",
+        fontSize: "17px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        boxShadow: "0 3px 10px rgba(0,0,0,0.18)",
+        transition: "transform 0.15s ease, background 0.15s ease",
+        pointerEvents: "auto",
+        padding: "0",
+        flexShrink: "0"
+      });
+
+      // تولتيب يظهر على يمين كل زر فرعي
+      const tooltip = document.createElement("span");
+      tooltip.textContent = action.label;
+      Object.assign(tooltip.style, {
+        background: "rgba(15, 23, 42, 0.95)",
+        color: "#ffffff",
+        padding: "4px 8px",
+        borderRadius: "6px",
+        fontSize: "12px",
+        fontWeight: "bold",
+        fontFamily: "Arial, sans-serif",
+        whiteSpace: "nowrap",
+        marginLeft: "8px",
+        pointerEvents: "none",
+        opacity: "0",
+        transform: "translateX(-4px)",
+        transition: "opacity 0.15s ease, transform 0.15s ease",
+        boxShadow: "0 3px 8px rgba(0,0,0,0.22)"
+      });
+
+      btn.addEventListener("mouseenter", () => {
+        btn.style.transform = "scale(1.15)";
+        btn.style.background = "#e6fcf5";
+        tooltip.style.opacity = "1";
+        tooltip.style.transform = "translateX(0px)";
+      });
+
+      btn.addEventListener("mouseleave", () => {
+        btn.style.transform = "scale(1)";
+        btn.style.background = "#ffffff";
+        tooltip.style.opacity = "0";
+        tooltip.style.transform = "translateX(-4px)";
+      });
+
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        hideMenu();
+        executeAction(action.id, mainButton);
+      });
+
+      itemWrapper.appendChild(btn);
+      itemWrapper.appendChild(tooltip);
+      radialMenu.appendChild(itemWrapper);
+
+      itemWrapper.dataset.x = x;
+      itemWrapper.dataset.y = y;
+    });
+
+    /* ========================================================
+     * إدارة الظهور والإخفاء للقائمة
+     * ======================================================== */
+
+    let hideTimer = null;
+
+    function showMenu() {
+      clearTimeout(hideTimer);
+      radialMenu.style.opacity = "1";
+      radialMenu.style.pointerEvents = "auto";
+      hitArea.style.pointerEvents = "auto";
+      mainButton.style.transform = "scale(1.06)";
+
+      const items = radialMenu.children;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const x = item.dataset.x;
+        const y = item.dataset.y;
+        item.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1)`;
+        item.style.pointerEvents = "auto";
+      }
+    }
+
+    function hideMenu() {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        radialMenu.style.opacity = "0";
+        radialMenu.style.pointerEvents = "none";
+        hitArea.style.pointerEvents = "none";
+        mainButton.style.transform = "scale(1)";
+
+        const items = radialMenu.children;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          item.style.transform = "translate(-50%, -50%) scale(0.6)";
+          item.style.pointerEvents = "none";
+        }
+      }, 350);
+    }
+
+    container.addEventListener("mouseenter", showMenu);
+    container.addEventListener("mouseleave", hideMenu);
+
+    container.appendChild(hitArea);
+    container.appendChild(radialMenu);
+    container.appendChild(mainButton);
+    document.body.appendChild(container);
+  }
