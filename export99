@@ -25,7 +25,7 @@
     // 2. الزر الرئيسي الدائم
     const mainButton = document.createElement("button");
     mainButton.id = CONFIG.buttonId;
-    mainButton.textContent = isDeedPage ? "📊" : "⚡";
+    mainButton.textContent = isDeedPage ? "📋" : "⚡";
     mainButton.title = isDeedPage ? "اضغط لاستخراج التقرير" : "خيارات العقار";
 
     Object.assign(mainButton.style, {
@@ -46,7 +46,7 @@
       transition: "transform 0.18s ease"
     });
 
-    // إذا كانت الصفحة صفحة الملاك / الصك: تنفيذ استخراج التقرير مباشرة عند النقر
+    // في صفحة الملاك / الصك: تنفيذ استخراج التقرير مباشرة عند النقر
     if (isDeedPage) {
       mainButton.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -89,12 +89,12 @@
       zIndex: "3"
     });
 
-    // توزيع الأزرار حسب الزوايا المطلوبة بدقة
+    // التوزيع السابق المستعاد
     const actions = [
-      { id: "FILL_MULTI_DEED", icon: "🧭", label: "تعبئة الصك المتعدد", angle: 0 },
+      { id: "EXTRACT_REPORT", icon: "📋", label: "استخراج التقرير", angle: 0 },
       { id: "COPY_MULTI_DEED", icon: "📑", label: "نسخ الصك المتعدد", angle: 30 },
-      { id: "FILL_PROPERTY", icon: "📥", label: "تعبئة العقار", angle: 60 },
-      { id: "EXTRACT_REPORT", icon: "📊", label: "استخراج التقرير", angle: 90 }
+      { id: "FILL_PROPERTY", icon: "🏠", label: "تعبئة العقار", angle: 60 },
+      { id: "FILL_MULTI_DEED", icon: "🧭", label: "تعبئة الصك المتعدد", angle: 90 }
     ];
 
     const radius = 95;
