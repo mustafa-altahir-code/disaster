@@ -1,13 +1,3 @@
-بدل الاختصارات، بمجرد اقتراب الماوس من الزر 📥، تظهر حوله ربع دائرة مقسّمة إلى 4 أقسام، كل قسم يمثل أمرًا باسم مختصر وواضح:
-
-- 📋 استخراج التقرير
-- 📑 نسخ الصك المتعدد
-- 🏠 تعبئة العقار
-- 🧭 تعبئة الصك المتعدد
-
-عند الابتعاد تختفي القائمة، وعند الضغط على أي قسم يُنفَّذ الأمر مباشرة، دون الحاجة إلى Ctrl أو النقر باليمين.
-
-للنسخة ادناه:
 (() => {
   "use strict";
 
@@ -18,6 +8,7 @@
   const CONFIG = {
     buttonId: "property-extractor-button",
     containerId: "property-extractor-container",
+    menuId: "property-extractor-radial-menu",
     multiDeedHeader: "=== MULTI_DEED_DATA_V1 ==="
   };
 
@@ -217,24 +208,6 @@
     };
   }
 
-  function getValueByName(name) {
-    const el = document.querySelector(`[name="${CSS.escape(name)}"]`);
-
-    if (!el) {
-      return {
-        value: "",
-        element: null
-      };
-    }
-
-    const value = getInputValue(el);
-
-    return {
-      value,
-      element: el
-    };
-  }
-
   /* ============================================================
    * مساعدات إدخال القيم وتحديث React State
    * ============================================================ */
@@ -338,27 +311,7 @@
 
   function getSelectByName(name) {
     const input = document.querySelector(`input[name="${CSS.escape(name)}"]`);
-
-    if (!input) {
-      return {
-        value: "",
-        element: null
-      };
-    }
-
-    return getReactSelectValue(input);
-  }
-
-  function getSelectById(id) {
-    const input = document.getElementById(id);
-
-    if (!input) {
-      return {
-        value: "",
-        element: null
-      };
-    }
-
+    if (!input) return { value: "", element: null };
     return getReactSelectValue(input);
   }
 
@@ -368,21 +321,13 @@
 
   function extractApplicationNumber() {
     const re = /\bDU\d+\b/i;
-
-    const elements = document.querySelectorAll(
-      "span, p, div, td, h1, h2, h3"
-    );
+    const elements = document.querySelectorAll("span, p, div, td, h1, h2, h3");
 
     for (const el of elements) {
       const text = cleanText(el.textContent);
-
       if (text.length > 200) continue;
-
       const match = text.match(re);
-
-      if (match) {
-        return match[0].toUpperCase();
-      }
+      if (match) return match[0].toUpperCase();
     }
 
     return "";
@@ -675,7 +620,6 @@
       directions: []
     };
 
-    // 1. الحقول الأساسية الـ 5
     const basicMappings = [
       ["lot", "رقم القطعة بالمخطط"],
       ["plan", "رقم المخطط"],
@@ -690,31 +634,22 @@
     const deedBoundary = getValueByPlaceholder("الحدود حسب الصك", "directions.");
     data.basic["deedBoundary"] = deedBoundary.value;
 
-    // 2. حقول الاتجاهات (4 حقول لكل اتجاه)
     for (let i = 0; i < 4; i++) {
-      const dirNumber = i + 1;
-
-      // اتجاه الصف
       let directionVal = "";
       const hidden = document.querySelector(`input[name="directions.${i}.direction"]`);
       if (hidden) {
         const parent = hidden.closest("div") || hidden.parentElement;
         const selectValue = parent?.querySelector('[class*="singleValue"]');
         directionVal = cleanText(selectValue?.textContent || "");
-        if (!directionVal) {
-          directionVal = getInputValue(hidden);
-        }
+        if (!directionVal) directionVal = getInputValue(hidden);
       }
 
-      // الحدود حسب الصك
       const deedBoundryInput = document.querySelector(`input[name="directions.${i}.deedBoundry"]`);
       const deedBoundryVal = deedBoundryInput ? getInputValue(deedBoundryInput) : "";
 
-      // الأبعاد حسب الصك (طول الضلع)
       const deedLengthInput = document.querySelector(`input[name="directions.${i}.deedDimentionLength"]`);
       const deedLengthVal = deedLengthInput ? getInputValue(deedLengthInput) : "";
 
-      // الأبعاد حسب الصك (المجموع)
       const deedTotalInput = document.querySelector(`input[name="directions.${i}.deedDimentionTotal"]`);
       const deedTotalVal = deedTotalInput ? getInputValue(deedTotalInput) : "";
 
@@ -774,7 +709,6 @@
       throw new Error("هيكل بيانات الصك المتعدد غير مطابق.");
     }
 
-    // 1. تعبئة الحقول الأساسية الـ 5
     const basicMappings = [
       ["lot", "رقم القطعة بالمخطط"],
       ["plan", "رقم المخطط"],
@@ -794,7 +728,6 @@
       setElementValue(deedBoundaryEl, data.basic.deedBoundary);
     }
 
-// 2. تعبئة حقول الاتجاهات الموجودة فقط دون إنشاء صفوف جديدة
     const directionCodeMap = {
       "الشمالية": "1",
       "الجنوبية": "2",
@@ -805,48 +738,28 @@
     for (let i = 0; i < data.directions.length; i++) {
       const dirData = data.directions[i];
 
-      // تعبئة الاتجاه بنفس طريقة التعبئة العادية
       if (dirData.direction) {
         const rawCode =
           directionCodeMap[cleanText(dirData.direction)] ||
           cleanText(dirData.direction);
 
-        const selectInput = document.getElementById(
-          `react-select-${5 + i}-input`
-        );
-
+        const selectInput = document.getElementById(`react-select-${5 + i}-input`);
         if (selectInput) {
           await setSelectValue(selectInput, rawCode);
-        } else {
-          console.warn(
-            `لم يتم العثور على حقل الاتجاه رقم ${i + 1}`
-          );
         }
       }
 
-      // الحدود حسب الصك
-      const deedBoundryInput = document.querySelector(
-        `input[name="directions.${i}.deedBoundry"]`
-      );
-
+      const deedBoundryInput = document.querySelector(`input[name="directions.${i}.deedBoundry"]`);
       if (deedBoundryInput && dirData.deedBoundry !== undefined) {
         setElementValue(deedBoundryInput, dirData.deedBoundry);
       }
 
-      // الأبعاد حسب الصك (طول الضلع)
-      const deedLengthInput = document.querySelector(
-        `input[name="directions.${i}.deedDimentionLength"]`
-      );
-
+      const deedLengthInput = document.querySelector(`input[name="directions.${i}.deedDimentionLength"]`);
       if (deedLengthInput && dirData.deedDimentionLength !== undefined) {
         setElementValue(deedLengthInput, dirData.deedDimentionLength);
       }
 
-      // الأبعاد حسب الصك (المجموع)
-      const deedTotalInput = document.querySelector(
-        `input[name="directions.${i}.deedDimentionTotal"]`
-      );
-
+      const deedTotalInput = document.querySelector(`input[name="directions.${i}.deedDimentionTotal"]`);
       if (deedTotalInput && dirData.deedDimentionTotal !== undefined) {
         setElementValue(deedTotalInput, dirData.deedDimentionTotal);
       }
@@ -1007,7 +920,7 @@
       if (east) setElementValue(east, point.east);
     }
 
-    // 5. قراءة الاتجاهات والأطوال من Clipboard
+    // 5. الاتجاهات
     let clipboardText = "";
     try {
       clipboardText = await navigator.clipboard.readText();
@@ -1058,7 +971,7 @@
   }
 
   /* ============================================================
-   * البحث عن القيم الظاهرة المهمة
+   * استخراج كل البيانات للتقرير
    * ============================================================ */
 
   function extractVisibleExtraData() {
@@ -1083,10 +996,6 @@
 
     return result;
   }
-
-  /* ============================================================
-   * استخراج كل البيانات للتقرير
-   * ============================================================ */
 
   async function extractAllData() {
     await wait(300);
@@ -1147,10 +1056,6 @@
     return finalData;
   }
 
-  /* ============================================================
-   * نسخ Excel — عمودين فقط
-   * ============================================================ */
-
   async function copyToExcel(data) {
     const rows = [["الحقل", "القيمة"]];
 
@@ -1193,7 +1098,7 @@
   }
 
   /* ============================================================
-   * نافذة التنبيه والإشعارات
+   * تنبيهات الشاشة
    * ============================================================ */
 
   function showToast(title, message, isSuccess = true) {
@@ -1220,7 +1125,8 @@
       fontFamily: "Arial,sans-serif",
       direction: "rtl",
       minWidth: "260px",
-      fontSize: "14px"
+      fontSize: "14px",
+      pointerEvents: "none"
     });
 
     box.innerHTML = `
@@ -1234,138 +1140,18 @@
     setTimeout(() => { box.remove(); }, 3500);
   }
 
-  function showResult(data) {
-    const values = Object.values(data);
-    const valid = values.filter(value => value && value !== "N/A").length;
-    showToast("تم استخراج التقرير", `تم التعرف على <b>${valid}</b> قيمة ونسخها للحافظة بصيغة Excel`, true);
-  }
-
   /* ============================================================
-   * الزر العائم وتوزيع الوظائف الأربع
+   * تنفيذ الأوامر الأربعة
    * ============================================================ */
 
-  function createButton() {
-    if (!isExtractionPage()) return;
-    if (document.getElementById(CONFIG.containerId)) return;
+  async function executeAction(actionType, mainBtn) {
+    if (mainBtn.disabled) return;
+    mainBtn.disabled = true;
+    mainBtn.textContent = "⏳";
 
-    const container = document.createElement("div");
-    container.id = CONFIG.containerId;
-
-    Object.assign(container.style, {
-      position: "fixed",
-      left: localStorage.getItem("propertyExtractorLeft") || "20px",
-      bottom: localStorage.getItem("propertyExtractorBottom") || "20px",
-      zIndex: "2147483647"
-    });
-
-    const button = document.createElement("button");
-    button.id = CONFIG.buttonId;
-    button.textContent = "📥";
-    button.title = "كلك يسار: استخراج تقرير كامل\nCtrl + كلك يسار: نسخ الصك المتعدد\nكلك يمين: تعبئة العقار\nCtrl + كلك يمين: تعبئة الصك المتعدد";
-
-    Object.assign(button.style, {
-      width: "54px",
-      height: "54px",
-      borderRadius: "50%",
-      border: "0",
-      background: "#ffffff",
-      color: "#087f5b",
-      fontSize: "24px",
-      cursor: "grab",
-      boxShadow: "0 4px 15px rgba(0,0,0,.2)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      userSelect: "none"
-    });
-
-    /* ========================================================
-     * السحب والإفلات
-     * ======================================================== */
-
-    let dragging = false;
-    let moved = false;
-    let startX = 0;
-    let startY = 0;
-    let startLeft = 0;
-    let startBottom = 0;
-
-    button.addEventListener("pointerdown", event => {
-      if (event.button !== 0) return;
-
-      dragging = true;
-      moved = false;
-      startX = event.clientX;
-      startY = event.clientY;
-
-      const rect = container.getBoundingClientRect();
-      startLeft = rect.left;
-      startBottom = window.innerHeight - rect.bottom;
-
-      button.style.cursor = "grabbing";
-      button.setPointerCapture(event.pointerId);
-    });
-
-    button.addEventListener("pointermove", event => {
-      if (!dragging) return;
-
-      const dx = event.clientX - startX;
-      const dy = event.clientY - startY;
-
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
-        moved = true;
-      }
-
-      let left = startLeft + dx;
-      let bottom = startBottom - dy;
-
-      left = Math.max(0, Math.min(left, window.innerWidth - container.offsetWidth));
-      bottom = Math.max(0, Math.min(bottom, window.innerHeight - container.offsetHeight));
-
-      container.style.left = `${left}px`;
-      container.style.bottom = `${bottom}px`;
-    });
-
-    button.addEventListener("pointerup", event => {
-      if (!dragging) return;
-
-      dragging = false;
-      button.style.cursor = "grab";
-
-      const rect = container.getBoundingClientRect();
-      localStorage.setItem("propertyExtractorLeft", `${rect.left}px`);
-      localStorage.setItem("propertyExtractorBottom", `${window.innerHeight - rect.bottom}px`);
-
-      try {
-        button.releasePointerCapture(event.pointerId);
-      } catch {}
-    });
-
-    /* ========================================================
-     * الوظيفة 1 & 2: كلك يسار (تقرير كامل) أو Ctrl + كلك يسار (صك متعدد)
-     * ======================================================== */
-
-    button.addEventListener("click", async (event) => {
-      if (moved) {
-        moved = false;
-        return;
-      }
-
-      if (button.disabled) return;
-      button.disabled = true;
-      button.textContent = "⏳";
-
-      try {
-        // الوظيفة 2: نسخ الصك المتعدد
-        if (event.ctrlKey) {
-          if (!isPropertyDataPage()) {
-            throw new Error("يجب فتح صفحة بيانات العقار لنسخ الصك المتعدد.");
-          }
-          await copyMultiDeedToClipboard();
-          showToast("تم نسخ الصك المتعدد", "تم حفظ الـ 21 حقلاً في الحافظة بنجاح.", true);
-        }
-        // الوظيفة 1: استخراج التقرير بالكامل (Excel)
-        else {
+    try {
+      switch (actionType) {
+        case "EXTRACT_REPORT":
           if (isDeedDetailsPage()) {
             const deedData = extractDeedData();
             const ownerData = extractOwnerData();
@@ -1386,7 +1172,7 @@
             });
 
             await copyToExcel(data);
-            showResult(data);
+            showToast("تم استخراج التقرير", "تم نسخ بيانات الصك والمالك إلى الحافظة بصيغة Excel.", true);
           } else if (isPropertyDataPage()) {
             const allData = await extractAllData();
             const data = {};
@@ -1407,71 +1193,323 @@
             if (!count) throw new Error("لم يتم العثور على أي بيانات.");
 
             await copyToExcel(data);
-            showResult(data);
+            showToast("تم استخراج التقرير", `تم نسخ <b>${count}</b> قيمة إلى الحافظة بصيغة Excel.`, true);
           } else {
-            throw new Error("هذه الصفحة ليست صفحة صك أو صفحة بيانات عقار.");
+            throw new Error("هذه الصفحة ليست صفحة استخراج معتمدة.");
           }
-        }
+          break;
 
-        button.textContent = "✅";
-        button.style.color = "#16a34a";
-      } catch (err) {
-        showToast("فشلت العملية", err.message || "حدث خطأ أثناء التنفيذ.", false);
-        button.textContent = "❌";
-        button.style.color = "#dc2626";
-      } finally {
-        setTimeout(() => {
-          button.textContent = "📥";
-          button.style.color = "#087f5b";
-          button.disabled = false;
-        }, 2200);
+        case "COPY_MULTI_DEED":
+          if (!isPropertyDataPage()) {
+            throw new Error("يجب فتح صفحة بيانات العقار لنسخ الصك المتعدد.");
+          }
+          await copyMultiDeedToClipboard();
+          showToast("تم نسخ الصك المتعدد", "تم نسخ الـ 21 حقلاً بنجاح إلى الحافظة.", true);
+          break;
+
+        case "FILL_PROPERTY":
+          if (!isPropertyDataPage()) {
+            throw new Error("يجب فتح صفحة بيانات العقار للتعبئة.");
+          }
+          await fillPropertyData();
+          if (document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur();
+          }
+          showToast("تمت التعبئة بنجاح", "تمت تعبئة بيانات العقار والإحداثيات.", true);
+          break;
+
+        case "FILL_MULTI_DEED":
+          if (!isPropertyDataPage()) {
+            throw new Error("يجب فتح صفحة بيانات العقار لتعبئة الصك المتعدد.");
+          }
+          await fillMultiDeedFromClipboard();
+          if (document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur();
+          }
+          showToast("تمت التعبئة بنجاح", "تمت تعبئة حقول الصك المتعدد فقط.", true);
+          break;
       }
+
+      mainBtn.textContent = "✅";
+      mainBtn.style.color = "#16a34a";
+    } catch (err) {
+      showToast("فشلت العملية", err.message || "حدث خطأ أثناء التنفيذ.", false);
+      mainBtn.textContent = "❌";
+      mainBtn.style.color = "#dc2626";
+    } finally {
+      setTimeout(() => {
+        mainBtn.textContent = "📥";
+        mainBtn.style.color = "#087f5b";
+        mainBtn.disabled = false;
+      }, 1500);
+    }
+  }
+
+  /* ============================================================
+   * إنشاء القائمة الدائرية والزر
+   * ============================================================ */
+
+  function createButton() {
+    if (!isExtractionPage()) return;
+    if (document.getElementById(CONFIG.containerId)) return;
+
+    const container = document.createElement("div");
+    container.id = CONFIG.containerId;
+
+    Object.assign(container.style, {
+      position: "fixed",
+      left: localStorage.getItem("propertyExtractorLeft") || "30px",
+      bottom: localStorage.getItem("propertyExtractorBottom") || "30px",
+      zIndex: "2147483647",
+      width: "56px",
+      height: "56px"
+    });
+
+    // القائمة الدائرية
+    const radialMenu = document.createElement("div");
+    radialMenu.id = CONFIG.menuId;
+    Object.assign(radialMenu.style, {
+      position: "absolute",
+      left: "0px",
+      top: "0px",
+      width: "100%",
+      height: "100%",
+      pointerEvents: "none",
+      transition: "opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+      opacity: "0"
+    });
+
+    const actions = [
+      { id: "EXTRACT_REPORT", icon: "📋", label: "استخراج التقرير", angle: 0 },
+      { id: "COPY_MULTI_DEED", icon: "📑", label: "نسخ الصك المتعدد", angle: 30 },
+      { id: "FILL_PROPERTY", icon: "🏠", label: "تعبئة العقار", angle: 60 },
+      { id: "FILL_MULTI_DEED", icon: "🧭", label: "تعبئة الصك المتعدد", angle: 90 }
+    ];
+
+    const radius = 95; // نصف قطر توزع الأزرار
+
+    actions.forEach(action => {
+      const rad = (action.angle * Math.PI) / 180;
+      const x = Math.round(Math.cos(rad) * radius);
+      const y = -Math.round(Math.sin(rad) * radius);
+
+      const itemWrapper = document.createElement("div");
+      Object.assign(itemWrapper.style, {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        transform: "translate(-50%, -50%)",
+        transition: "transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)",
+        display: "flex",
+        alignItems: "center",
+        flexDirection: "row-reverse",
+        pointerEvents: "none",
+        zIndex: "10"
+      });
+
+      const btn = document.createElement("button");
+      btn.textContent = action.icon;
+      btn.setAttribute("aria-label", action.label);
+
+      Object.assign(btn.style, {
+        width: "44px",
+        height: "44px",
+        borderRadius: "50%",
+        border: "1.5px solid #087f5b",
+        background: "#ffffff",
+        fontSize: "20px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        boxShadow: "0 4px 14px rgba(0,0,0,0.18)",
+        transition: "transform 0.15s ease, background 0.15s ease",
+        pointerEvents: "auto",
+        padding: "0"
+      });
+
+      // وسم توضيحي عند التمرير
+      const labelBadge = document.createElement("span");
+      labelBadge.textContent = action.label;
+      Object.assign(labelBadge.style, {
+        background: "rgba(15, 23, 42, 0.9)",
+        color: "#ffffff",
+        padding: "4px 8px",
+        borderRadius: "6px",
+        fontSize: "12px",
+        fontWeight: "bold",
+        fontFamily: "Arial, sans-serif",
+        whiteSpace: "nowrap",
+        marginRight: "8px",
+        pointerEvents: "none",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+        opacity: "0",
+        transition: "opacity 0.15s ease"
+      });
+
+      btn.addEventListener("mouseenter", () => {
+        btn.style.transform = "scale(1.15)";
+        btn.style.background = "#e6fcf5";
+        labelBadge.style.opacity = "1";
+      });
+
+      btn.addEventListener("mouseleave", () => {
+        btn.style.transform = "scale(1)";
+        btn.style.background = "#ffffff";
+        labelBadge.style.opacity = "0";
+      });
+
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        hideMenu();
+        executeAction(action.id, mainButton);
+      });
+
+      itemWrapper.appendChild(btn);
+      itemWrapper.appendChild(labelBadge);
+      radialMenu.appendChild(itemWrapper);
+
+      itemWrapper.dataset.x = x;
+      itemWrapper.dataset.y = y;
+    });
+
+    // الزر الرئيسي
+    const mainButton = document.createElement("button");
+    mainButton.id = CONFIG.buttonId;
+    mainButton.textContent = "📥";
+    mainButton.title = "مرر الفأرة لإظهار قائمة الأوامر";
+
+    Object.assign(mainButton.style, {
+      width: "56px",
+      height: "56px",
+      borderRadius: "50%",
+      border: "0",
+      background: "#ffffff",
+      color: "#087f5b",
+      fontSize: "25px",
+      cursor: "grab",
+      boxShadow: "0 4px 16px rgba(0,0,0,0.22)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      userSelect: "none",
+      position: "relative",
+      zIndex: "2"
     });
 
     /* ========================================================
-     * الوظيفة 3 & 4: كلك يمين (تعبئة عقار) أو Ctrl + كلك يمين (تعبئة صك متعدد)
+     * التحكم بظهور واختفاء القائمة
      * ======================================================== */
 
-    button.addEventListener("contextmenu", async (event) => {
-      event.preventDefault();
+    let hideTimeout = null;
 
-      if (button.disabled || !isPropertyDataPage()) return;
+    function showMenu() {
+      if (dragging) return;
+      clearTimeout(hideTimeout);
+      radialMenu.style.opacity = "1";
+      radialMenu.style.pointerEvents = "auto";
 
-      button.disabled = true;
-      button.textContent = "⏳";
-
-      try {
-        // الوظيفة 4: تعبئة الصك المتعدد
-        if (event.ctrlKey) {
-          await fillMultiDeedFromClipboard();
-          showToast("تمت التعبئة بنجاح", "تمت تعبئة حقول الصك المتعدد من الحافظة.", true);
-        }
-        // الوظيفة 3: تعبئة بيانات العقار العادية
-        else {
-          await fillPropertyData();
-          showToast("تمت التعبئة بنجاح", "تمت تعبئة بيانات العقار والإحداثيات.", true);
-        }
-
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
-        }
-
-        button.textContent = "✅";
-        button.style.color = "#16a34a";
-      } catch (err) {
-        showToast("فشل في التعبئة", err.message || "حدث خطأ أثناء قراءة الحافظة وتعبئة البيانات.", false);
-        button.textContent = "❌";
-        button.style.color = "#dc2626";
-      } finally {
-        setTimeout(() => {
-          button.textContent = "📥";
-          button.style.color = "#087f5b";
-          button.disabled = false;
-        }, 1500);
+      const items = radialMenu.children;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const x = item.dataset.x;
+        const y = item.dataset.y;
+        item.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+        item.style.pointerEvents = "auto";
       }
+    }
+
+    function hideMenu() {
+      clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => {
+        radialMenu.style.opacity = "0";
+        radialMenu.style.pointerEvents = "none";
+
+        const items = radialMenu.children;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          item.style.transform = "translate(-50%, -50%)";
+          item.style.pointerEvents = "none";
+        }
+      }, 250);
+    }
+
+    container.addEventListener("mouseenter", showMenu);
+    container.addEventListener("mouseleave", hideMenu);
+
+    /* ========================================================
+     * السحب والإفلات
+     * ======================================================== */
+
+    let dragging = false;
+    let moved = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startBottom = 0;
+
+    mainButton.addEventListener("pointerdown", event => {
+      if (event.button !== 0) return;
+
+      dragging = true;
+      moved = false;
+      startX = event.clientX;
+      startY = event.clientY;
+
+      const rect = container.getBoundingClientRect();
+      startLeft = rect.left;
+      startBottom = window.innerHeight - rect.bottom;
+
+      mainButton.style.cursor = "grabbing";
+      mainButton.setPointerCapture(event.pointerId);
+      hideMenu();
     });
 
-    container.appendChild(button);
+    mainButton.addEventListener("pointermove", event => {
+      if (!dragging) return;
+
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        moved = true;
+      }
+
+      let left = startLeft + dx;
+      let bottom = startBottom - dy;
+
+      left = Math.max(0, Math.min(left, window.innerWidth - container.offsetWidth));
+      bottom = Math.max(0, Math.min(bottom, window.innerHeight - container.offsetHeight));
+
+      container.style.left = `${left}px`;
+      container.style.bottom = `${bottom}px`;
+    });
+
+    mainButton.addEventListener("pointerup", event => {
+      if (!dragging) return;
+
+      dragging = false;
+      mainButton.style.cursor = "grab";
+
+      const rect = container.getBoundingClientRect();
+      localStorage.setItem("propertyExtractorLeft", `${rect.left}px`);
+      localStorage.setItem("propertyExtractorBottom", `${window.innerHeight - rect.bottom}px`);
+
+      try {
+        mainButton.releasePointerCapture(event.pointerId);
+      } catch {}
+    });
+
+    mainButton.addEventListener("click", () => {
+      if (moved) {
+        moved = false;
+        return;
+      }
+      showMenu();
+    });
+
+    container.appendChild(radialMenu);
+    container.appendChild(mainButton);
     document.body.appendChild(container);
   }
 
