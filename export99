@@ -1,14 +1,12 @@
   /* ============================================================
-   * الزر العائم والقائمة المنبثقة (بالمسافات والزوايا السابقة)
+   * الزر العائم والقائمة المنبثقة (ثابت، بدون تداخل، محمي الحواف)
    * ============================================================ */
 
   function createButton() {
     if (!isExtractionPage()) return;
     if (document.getElementById(CONFIG.containerId)) return;
 
-    const isDeedPage = isDeedDetailsPage();
-
-    // 1. الحاوية الثابتة في الركن السفلي الأيسر
+    // 1. تثبيت الحاوية دائماً في زاوية آمنة (يسار أسفل) بعيداً عن localStorage
     const container = document.createElement("div");
     container.id = CONFIG.containerId;
 
@@ -22,11 +20,127 @@
       userSelect: "none"
     });
 
-    // 2. الزر الرئيسي الدائم
+    // 2. درع تفاعلي يغطي ربع الدائرة بالكامل لمنع اختفاء القائمة أثناء تحريك الماوس
+    const hitArea = document.createElement("div");
+    Object.assign(hitArea.style, {
+      position: "absolute",
+      left: "-10px",
+      bottom: "-10px",
+      width: "170px",
+      height: "170px",
+      borderRadius: "0 170px 0 0",
+      pointerEvents: "none",
+      zIndex: "1"
+    });
+
+    // 3. مساحة القائمة
+    const radialMenu = document.createElement("div");
+    radialMenu.id = CONFIG.menuId;
+    Object.assign(radialMenu.style, {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      width: "100%",
+      height: "100%",
+      pointerEvents: "none",
+      transition: "opacity 0.2s ease",
+      opacity: "0",
+      zIndex: "3"
+    });
+
+    // 4. بطاقة التولتيب الموحدة (تظهر في المنتصف أعلى الزر الرئيسي لعدم حجب أي زر)
+    const centralTooltip = document.createElement("div");
+    Object.assign(centralTooltip.style, {
+      position: "absolute",
+      bottom: "62px",
+      left: "50%",
+      transform: "translateX(-50%) translateY(4px)",
+      background: "rgba(15, 23, 42, 0.95)",
+      color: "#ffffff",
+      padding: "5px 12px",
+      borderRadius: "8px",
+      fontSize: "12px",
+      fontWeight: "bold",
+      fontFamily: "Arial, sans-serif",
+      whiteSpace: "nowrap",
+      pointerEvents: "none",
+      opacity: "0",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+      transition: "opacity 0.15s ease, transform 0.15s ease",
+      zIndex: "20"
+    });
+
+    // توزيع الأوامر داخل ربع الدائرة (نحو داخل الشاشة: أعلى ويمين)
+    const actions = [
+      { id: "EXTRACT_REPORT", icon: "📋", label: "استخراج التقرير", angle: 0 },   // أقصى اليمين أفقي
+      { id: "COPY_MULTI_DEED", icon: "📑", label: "نسخ الصك المتعدد", angle: 30 },
+      { id: "FILL_PROPERTY", icon: "🏠", label: "تعبئة العقار", angle: 60 },
+      { id: "FILL_MULTI_DEED", icon: "🧭", label: "تعبئة الصك المتعدد", angle: 90 } // أقصى الأعلى رأسي
+    ];
+
+    const radius = 95; // مسافة تمنع تداخل الأزرار ذات الـ 38px كلياً
+
+    actions.forEach(action => {
+      const rad = (action.angle * Math.PI) / 180;
+      const x = Math.round(Math.cos(rad) * radius);
+      const y = -Math.round(Math.sin(rad) * radius);
+
+      const btn = document.createElement("button");
+      btn.textContent = action.icon;
+      btn.title = "";
+
+      Object.assign(btn.style, {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        width: "38px",
+        height: "38px",
+        borderRadius: "50%",
+        border: "1.5px solid #087f5b",
+        background: "#ffffff",
+        fontSize: "17px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
+        transform: "translate(-50%, -50%) scale(0.6)",
+        transition: "transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.15s ease",
+        pointerEvents: "none",
+        padding: "0"
+      });
+
+      btn.addEventListener("mouseenter", () => {
+        btn.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1.15)`;
+        btn.style.background = "#e6fcf5";
+        centralTooltip.textContent = action.label;
+        centralTooltip.style.opacity = "1";
+        centralTooltip.style.transform = "translateX(-50%) translateY(0)";
+      });
+
+      btn.addEventListener("mouseleave", () => {
+        btn.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1)`;
+        btn.style.background = "#ffffff";
+        centralTooltip.style.opacity = "0";
+        centralTooltip.style.transform = "translateX(-50%) translateY(4px)";
+      });
+
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        hideMenu();
+        executeAction(action.id, mainButton);
+      });
+
+      radialMenu.appendChild(btn);
+      btn.dataset.x = x;
+      btn.dataset.y = y;
+    });
+
+    // 5. الزر الرئيسي الدائم
     const mainButton = document.createElement("button");
     mainButton.id = CONFIG.buttonId;
-    mainButton.textContent = isDeedPage ? "📋" : "⚡";
-    mainButton.title = isDeedPage ? "اضغط لاستخراج التقرير" : "خيارات العقار";
+    mainButton.textContent = "📥";
+    mainButton.title = "";
 
     Object.assign(mainButton.style, {
       width: "50px",
@@ -43,152 +157,11 @@
       justifyContent: "center",
       position: "relative",
       zIndex: "5",
-      transition: "transform 0.15s ease"
-    });
-
-    // في صفحة الملاك / الصك: تنفيذ استخراج التقرير مباشرة عند النقر
-    if (isDeedPage) {
-      mainButton.addEventListener("click", (e) => {
-        e.stopPropagation();
-        executeAction("EXTRACT_REPORT", mainButton);
-      });
-
-      container.appendChild(mainButton);
-      document.body.appendChild(container);
-      return;
-    }
-
-    // ============================================================
-    // في صفحة بيانات العقار: بناء القائمة الدائرية والتولتيب
-    // ============================================================
-
-    const hitArea = document.createElement("div");
-    Object.assign(hitArea.style, {
-      position: "absolute",
-      left: "-10px",
-      bottom: "-10px",
-      width: "160px",
-      height: "160px",
-      borderRadius: "0 160px 0 0",
-      pointerEvents: "none",
-      zIndex: "1"
-    });
-
-    const radialMenu = document.createElement("div");
-    radialMenu.id = CONFIG.menuId;
-    Object.assign(radialMenu.style, {
-      position: "absolute",
-      left: "0px",
-      top: "0px",
-      width: "100%",
-      height: "100%",
-      pointerEvents: "none",
-      transition: "opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
-      opacity: "0",
-      zIndex: "3"
-    });
-
-    // الأوامر مع توزيع الزوايا (0°، 30°، 60°، 90°)
-    const actions = [
-      { id: "EXTRACT_REPORT", icon: "📋", label: "استخراج التقرير", angle: 0 },
-      { id: "COPY_MULTI_DEED", icon: "📑", label: "نسخ الصك المتعدد", angle: 30 },
-      { id: "FILL_PROPERTY", icon: "🏠", label: "تعبئة العقار", angle: 60 },
-      { id: "FILL_MULTI_DEED", icon: "🧭", label: "تعبئة الصك المتعدد", angle: 90 }
-    ];
-
-    // استعادة نصف القطر السابق الدقيق لمنع تباعد الأزرار
-    const radius = 82;
-
-    actions.forEach(action => {
-      const rad = (action.angle * Math.PI) / 180;
-      const x = Math.round(Math.cos(rad) * radius);
-      const y = -Math.round(Math.sin(rad) * radius);
-
-      const itemWrapper = document.createElement("div");
-      Object.assign(itemWrapper.style, {
-        position: "absolute",
-        left: "50%",
-        top: "50%",
-        transform: "translate(-50%, -50%)",
-        transition: "transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1)",
-        display: "flex",
-        alignItems: "center",
-        flexDirection: "row", // الزر ثم التولتيب على يمينه
-        pointerEvents: "none",
-        zIndex: "10"
-      });
-
-      const btn = document.createElement("button");
-      btn.textContent = action.icon;
-      btn.title = "";
-
-      Object.assign(btn.style, {
-        width: "38px",
-        height: "38px",
-        borderRadius: "50%",
-        border: "1.5px solid #087f5b",
-        background: "#ffffff",
-        fontSize: "17px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        boxShadow: "0 3px 10px rgba(0,0,0,0.18)",
-        transition: "transform 0.15s ease, background 0.15s ease",
-        pointerEvents: "auto",
-        padding: "0",
-        flexShrink: "0"
-      });
-
-      const tooltip = document.createElement("span");
-      tooltip.textContent = action.label;
-      Object.assign(tooltip.style, {
-        background: "rgba(17, 24, 39, 0.92)",
-        color: "#ffffff",
-        padding: "4px 8px",
-        borderRadius: "6px",
-        fontSize: "12px",
-        fontWeight: "600",
-        fontFamily: "Arial, sans-serif",
-        whiteSpace: "nowrap",
-        marginLeft: "8px",
-        pointerEvents: "none",
-        boxShadow: "0 3px 8px rgba(0,0,0,0.22)",
-        opacity: "0",
-        transform: "translateX(-4px)",
-        transition: "opacity 0.18s ease, transform 0.18s ease"
-      });
-
-      btn.addEventListener("mouseenter", () => {
-        btn.style.transform = "scale(1.12)";
-        btn.style.background = "#e6fcf5";
-        tooltip.style.opacity = "1";
-        tooltip.style.transform = "translateX(0px)";
-      });
-
-      btn.addEventListener("mouseleave", () => {
-        btn.style.transform = "scale(1)";
-        btn.style.background = "#ffffff";
-        tooltip.style.opacity = "0";
-        tooltip.style.transform = "translateX(-4px)";
-      });
-
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        hideMenu();
-        executeAction(action.id, mainButton);
-      });
-
-      itemWrapper.appendChild(btn);
-      itemWrapper.appendChild(tooltip);
-      radialMenu.appendChild(itemWrapper);
-
-      itemWrapper.dataset.x = x;
-      itemWrapper.dataset.y = y;
+      transition: "transform 0.18s ease"
     });
 
     /* ========================================================
-     * آلية الظهور والإخفاء السلسة
+     * إدارة الظهور والإخفاء
      * ======================================================== */
 
     let hideTimer = null;
@@ -198,16 +171,15 @@
       radialMenu.style.opacity = "1";
       radialMenu.style.pointerEvents = "auto";
       hitArea.style.pointerEvents = "auto";
-      mainButton.style.transform = "scale(1.05)";
+      mainButton.style.transform = "scale(1.06)";
 
-      const items = radialMenu.children;
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const x = item.dataset.x;
-        const y = item.dataset.y;
-        item.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
-        item.style.pointerEvents = "auto";
-      }
+      const buttons = radialMenu.querySelectorAll("button");
+      buttons.forEach(btn => {
+        const x = btn.dataset.x;
+        const y = btn.dataset.y;
+        btn.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1)`;
+        btn.style.pointerEvents = "auto";
+      });
     }
 
     function hideMenu() {
@@ -216,14 +188,14 @@
         radialMenu.style.opacity = "0";
         radialMenu.style.pointerEvents = "none";
         hitArea.style.pointerEvents = "none";
+        centralTooltip.style.opacity = "0";
         mainButton.style.transform = "scale(1)";
 
-        const items = radialMenu.children;
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
-          item.style.transform = "translate(-50%, -50%)";
-          item.style.pointerEvents = "none";
-        }
+        const buttons = radialMenu.querySelectorAll("button");
+        buttons.forEach(btn => {
+          btn.style.transform = "translate(-50%, -50%) scale(0.6)";
+          btn.style.pointerEvents = "none";
+        });
       }, 350);
     }
 
@@ -232,6 +204,7 @@
 
     container.appendChild(hitArea);
     container.appendChild(radialMenu);
+    container.appendChild(centralTooltip);
     container.appendChild(mainButton);
     document.body.appendChild(container);
   }
