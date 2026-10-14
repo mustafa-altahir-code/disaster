@@ -1,5 +1,5 @@
   /* ============================================================
-   * الزر العائم والقائمة المنبثقة
+   * الزر العائم والقائمة المنبثقة (بالمسافات والزوايا السابقة)
    * ============================================================ */
 
   function createButton() {
@@ -43,7 +43,7 @@
       justifyContent: "center",
       position: "relative",
       zIndex: "5",
-      transition: "transform 0.18s ease"
+      transition: "transform 0.15s ease"
     });
 
     // في صفحة الملاك / الصك: تنفيذ استخراج التقرير مباشرة عند النقر
@@ -62,15 +62,14 @@
     // في صفحة بيانات العقار: بناء القائمة الدائرية والتولتيب
     // ============================================================
 
-    // درع تفاعلي لتسهيل حركة الماوس بين الزر الرئيسي والأزرار الفرعية
     const hitArea = document.createElement("div");
     Object.assign(hitArea.style, {
       position: "absolute",
       left: "-10px",
       bottom: "-10px",
-      width: "180px",
-      height: "180px",
-      borderRadius: "0 180px 0 0",
+      width: "160px",
+      height: "160px",
+      borderRadius: "0 160px 0 0",
       pointerEvents: "none",
       zIndex: "1"
     });
@@ -79,17 +78,17 @@
     radialMenu.id = CONFIG.menuId;
     Object.assign(radialMenu.style, {
       position: "absolute",
-      left: "0",
-      top: "0",
+      left: "0px",
+      top: "0px",
       width: "100%",
       height: "100%",
       pointerEvents: "none",
-      transition: "opacity 0.2s ease",
+      transition: "opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
       opacity: "0",
       zIndex: "3"
     });
 
-    // التوزيع السابق المستعاد
+    // الأوامر مع توزيع الزوايا (0°، 30°، 60°، 90°)
     const actions = [
       { id: "EXTRACT_REPORT", icon: "📋", label: "استخراج التقرير", angle: 0 },
       { id: "COPY_MULTI_DEED", icon: "📑", label: "نسخ الصك المتعدد", angle: 30 },
@@ -97,24 +96,24 @@
       { id: "FILL_MULTI_DEED", icon: "🧭", label: "تعبئة الصك المتعدد", angle: 90 }
     ];
 
-    const radius = 95;
+    // استعادة نصف القطر السابق الدقيق لمنع تباعد الأزرار
+    const radius = 82;
 
     actions.forEach(action => {
       const rad = (action.angle * Math.PI) / 180;
       const x = Math.round(Math.cos(rad) * radius);
       const y = -Math.round(Math.sin(rad) * radius);
 
-      // حاوية الزر مع التولتيب الخاص به
       const itemWrapper = document.createElement("div");
       Object.assign(itemWrapper.style, {
         position: "absolute",
         left: "50%",
         top: "50%",
+        transform: "translate(-50%, -50%)",
+        transition: "transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1)",
         display: "flex",
         alignItems: "center",
         flexDirection: "row", // الزر ثم التولتيب على يمينه
-        transform: "translate(-50%, -50%) scale(0.6)",
-        transition: "transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1)",
         pointerEvents: "none",
         zIndex: "10"
       });
@@ -141,28 +140,27 @@
         flexShrink: "0"
       });
 
-      // تولتيب يظهر على يمين كل زر فرعي
       const tooltip = document.createElement("span");
       tooltip.textContent = action.label;
       Object.assign(tooltip.style, {
-        background: "rgba(15, 23, 42, 0.95)",
+        background: "rgba(17, 24, 39, 0.92)",
         color: "#ffffff",
         padding: "4px 8px",
         borderRadius: "6px",
         fontSize: "12px",
-        fontWeight: "bold",
+        fontWeight: "600",
         fontFamily: "Arial, sans-serif",
         whiteSpace: "nowrap",
         marginLeft: "8px",
         pointerEvents: "none",
+        boxShadow: "0 3px 8px rgba(0,0,0,0.22)",
         opacity: "0",
         transform: "translateX(-4px)",
-        transition: "opacity 0.15s ease, transform 0.15s ease",
-        boxShadow: "0 3px 8px rgba(0,0,0,0.22)"
+        transition: "opacity 0.18s ease, transform 0.18s ease"
       });
 
       btn.addEventListener("mouseenter", () => {
-        btn.style.transform = "scale(1.15)";
+        btn.style.transform = "scale(1.12)";
         btn.style.background = "#e6fcf5";
         tooltip.style.opacity = "1";
         tooltip.style.transform = "translateX(0px)";
@@ -190,7 +188,7 @@
     });
 
     /* ========================================================
-     * إدارة الظهور والإخفاء للقائمة
+     * آلية الظهور والإخفاء السلسة
      * ======================================================== */
 
     let hideTimer = null;
@@ -200,14 +198,14 @@
       radialMenu.style.opacity = "1";
       radialMenu.style.pointerEvents = "auto";
       hitArea.style.pointerEvents = "auto";
-      mainButton.style.transform = "scale(1.06)";
+      mainButton.style.transform = "scale(1.05)";
 
       const items = radialMenu.children;
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const x = item.dataset.x;
         const y = item.dataset.y;
-        item.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1)`;
+        item.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
         item.style.pointerEvents = "auto";
       }
     }
@@ -223,7 +221,7 @@
         const items = radialMenu.children;
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
-          item.style.transform = "translate(-50%, -50%) scale(0.6)";
+          item.style.transform = "translate(-50%, -50%)";
           item.style.pointerEvents = "none";
         }
       }, 350);
