@@ -1253,6 +1253,8 @@
     if (!isExtractionPage()) return;
     if (document.getElementById(CONFIG.containerId)) return;
 
+    const isDeedPage = isDeedDetailsPage();
+
     // 1. تثبيت الحاوية دائماً في زاوية آمنة (يسار أسفل) بعيداً عن localStorage
     const container = document.createElement("div");
     container.id = CONFIG.containerId;
@@ -1267,7 +1269,43 @@
       userSelect: "none"
     });
 
-    // 2. درع تفاعلي يغطي ربع الدائرة بالكامل لمنع اختفاء القائمة أثناء تحريك الماوس
+    // 2. الزر الرئيسي الدائم
+    const mainButton = document.createElement("button");
+    mainButton.id = CONFIG.buttonId;
+    mainButton.textContent = "📥";
+    mainButton.title = isDeedPage ? "اضغط لاستخراج التقرير" : "";
+
+    Object.assign(mainButton.style, {
+      width: "50px",
+      height: "50px",
+      borderRadius: "50%",
+      border: "0",
+      background: "#ffffff",
+      color: "#087f5b",
+      fontSize: "22px",
+      cursor: "pointer",
+      boxShadow: "0 4px 14px rgba(0,0,0,0.22)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      position: "relative",
+      zIndex: "5",
+      transition: "transform 0.18s ease"
+    });
+
+    // في صفحة الملاك / الصك: تنفيذ استخراج التقرير مباشرة عند النقر دون إنشاء أي أزرار فرعية
+    if (isDeedPage) {
+      mainButton.addEventListener("click", (e) => {
+        e.stopPropagation();
+        executeAction("EXTRACT_REPORT", mainButton);
+      });
+
+      container.appendChild(mainButton);
+      document.body.appendChild(container);
+      return;
+    }
+
+    // 3. درع تفاعلي يغطي ربع الدائرة بالكامل لمنع اختفاء القائمة أثناء تحريك الماوس (في صفحة العقار فقط)
     const hitArea = document.createElement("div");
     Object.assign(hitArea.style, {
       position: "absolute",
@@ -1280,7 +1318,7 @@
       zIndex: "1"
     });
 
-    // 3. مساحة القائمة
+    // 4. مساحة القائمة
     const radialMenu = document.createElement("div");
     radialMenu.id = CONFIG.menuId;
     Object.assign(radialMenu.style, {
@@ -1295,27 +1333,28 @@
       zIndex: "3"
     });
 
-// 4. بطاقة التولتيب بجوار الزر الفرعي
-const centralTooltip = document.createElement("div");
-Object.assign(centralTooltip.style, {
-  position: "fixed",
-  left: "0",
-  top: "0",
-  transform: "translate(8px, -50%)",
-  background: "rgba(15, 23, 42, 0.95)",
-  color: "#ffffff",
-  padding: "5px 12px",
-  borderRadius: "8px",
-  fontSize: "12px",
-  fontWeight: "bold",
-  fontFamily: "Arial, sans-serif",
-  whiteSpace: "nowrap",
-  pointerEvents: "none",
-  opacity: "0",
-  boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-  transition: "opacity 0.15s ease",
-  zIndex: "2147483647"
-});
+    // 5. بطاقة التولتيب بجوار الزر الفرعي
+    const centralTooltip = document.createElement("div");
+    Object.assign(centralTooltip.style, {
+      position: "fixed",
+      left: "0",
+      top: "0",
+      transform: "translate(8px, -50%)",
+      background: "rgba(15, 23, 42, 0.95)",
+      color: "#ffffff",
+      padding: "5px 12px",
+      borderRadius: "8px",
+      fontSize: "12px",
+      fontWeight: "bold",
+      fontFamily: "Arial, sans-serif",
+      whiteSpace: "nowrap",
+      pointerEvents: "none",
+      opacity: "0",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+      transition: "opacity 0.15s ease",
+      zIndex: "2147483647"
+    });
+
     // توزيع الأوامر داخل ربع الدائرة (نحو داخل الشاشة: أعلى ويمين)
     const actions = [
       { id: "FILL_MULTI_DEED", icon: "📋📋", label: "تعبئة الصك المتعدد", angle: 0 },
@@ -1324,7 +1363,7 @@ Object.assign(centralTooltip.style, {
       { id: "EXTRACT_REPORT", icon: "⬆️", label: "استخراج التقرير", angle: 90 }
     ];
 
-    const radius = 95; // مسافة تمنع تداخل الأزرار ذات الـ 38px كلياً
+    const radius = 95;
 
     actions.forEach(action => {
       const rad = (action.angle * Math.PI) / 180;
@@ -1356,23 +1395,24 @@ Object.assign(centralTooltip.style, {
         padding: "0"
       });
 
-btn.addEventListener("mouseenter", () => {
-  btn.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1.15)`;
-  btn.style.background = "#e6fcf5";
+      btn.addEventListener("mouseenter", () => {
+        btn.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1.15)`;
+        btn.style.background = "#e6fcf5";
 
-  const rect = btn.getBoundingClientRect();
-  centralTooltip.textContent = action.label;
-  centralTooltip.style.left = `${rect.right + 8}px`;
-   centralTooltip.style.top = `${rect.top + rect.height / 2 - 24}px`;
-  centralTooltip.style.transform = "translateY(-50%)";
-  centralTooltip.style.opacity = "1";
-});
+        const rect = btn.getBoundingClientRect();
+        centralTooltip.textContent = action.label;
+        centralTooltip.style.left = `${rect.right + 8}px`;
+        centralTooltip.style.top = `${rect.top + rect.height / 2 - 24}px`;
+        centralTooltip.style.transform = "translateY(-50%)";
+        centralTooltip.style.opacity = "1";
+      });
 
-btn.addEventListener("mouseleave", () => {
-  btn.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1)`;
-  btn.style.background = "#ffffff";
-  centralTooltip.style.opacity = "0";
-});
+      btn.addEventListener("mouseleave", () => {
+        btn.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(1)`;
+        btn.style.background = "#ffffff";
+        centralTooltip.style.opacity = "0";
+      });
+
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         hideMenu();
@@ -1382,30 +1422,6 @@ btn.addEventListener("mouseleave", () => {
       radialMenu.appendChild(btn);
       btn.dataset.x = x;
       btn.dataset.y = y;
-    });
-
-    // 5. الزر الرئيسي الدائم
-    const mainButton = document.createElement("button");
-    mainButton.id = CONFIG.buttonId;
-    mainButton.textContent = "📥";
-    mainButton.title = "";
-
-    Object.assign(mainButton.style, {
-      width: "50px",
-      height: "50px",
-      borderRadius: "50%",
-      border: "0",
-      background: "#ffffff",
-      color: "#087f5b",
-      fontSize: "22px",
-      cursor: "pointer",
-      boxShadow: "0 4px 14px rgba(0,0,0,0.22)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      position: "relative",
-      zIndex: "5",
-      transition: "transform 0.18s ease"
     });
 
     /* ========================================================
@@ -1456,6 +1472,7 @@ btn.addEventListener("mouseleave", () => {
     container.appendChild(mainButton);
     document.body.appendChild(container);
   }
+
   /* ============================================================
    * التحقق من الصفحات والمراقبة التلقائية
    * ============================================================ */
