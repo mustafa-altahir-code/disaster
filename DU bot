@@ -1,0 +1,243 @@
+تطوير إضافة متصفح DU Crawler
+
+نريد تحويل السكربت الحالي إلى إضافة متصفح (Browser Extension) تعمل على صفحة البحث، مع تغيير نظام التعرف من FR إلى DU، وتنفيذ الخطوات التالية:
+
+قراءة الطلبات: استخراج أرقام الطلبات التي تبدأ بـ DU من جدول نتائج البحث في الصفحة الحالية.
+فتح الطلبات: فتح كل طلب في تبويب منفصل، مع إمكانية معالجة عدة طلبات بالتتابع دون فقدان بيانات الصفحة الرئيسية.
+تنفيذ الإجراءات داخل الطلب:
+الضغط على عنصر «المراجعة» باستخدام المحدد:
+
+div > div.transition-all.flex-row-reverse.duration-700 > div.w-full.p-8.transition-all.duration-700:nth-of-type(2) > div.max-w-8xl.font-ibm-sans.inner-container.relative > div.mt-12:nth-of-type(6) > div.mt-10.mb-10:nth-of-type(3) > div.flex.items-center.justify-center > div.cursor-pointer:nth-of-type(6)
+
+فتح القائمة باستخدام المحدد:
+
+#upgrade-deed-real-estate-number
+
+استخراج ونسخ جميع القيم الموجودة في القائمة، سواء كانت قيمة واحدة أو عدة قيم.
+تسجيل النتائج: إضافة القيم المستخرجة إلى الجدول الرئيسي، مع ربط كل قيمة برقم الطلب DU الخاص بها، مع منع التكرار والمحافظة على جميع النتائج.
+إغلاق التبويب: بعد استخراج البيانات وتسجيلها بنجاح، يُغلق تبويب الطلب تلقائيًا، ثم تتم معالجة الطلب التالي.
+الانتقال بين الصفحات: بعد الانتهاء من جميع طلبات الصفحة الحالية، تنتقل الإضافة إلى الصفحة التالية وتكرر العملية حتى انتهاء جميع الصفحات.التمييز البصري داخل صفحة الطلب
+عند العثور على عنصر «المراجعة»، يتم تمييزه بإطار واضح باللون الأصفر قبل الضغط عليه.
+عند العثور على القائمة #upgrade-deed-real-estate-number، يتم تمييزها بإطار أخضر واضح.
+تمييز القيم التي تم استخراجها بنجاح داخل القائمة باللون الأخضر، مع إظهار علامة ✓ بجانب كل قيمة تم التقاطها.
+إذا لم يتم العثور على العنصر أو تعذّر استخراج القيم، يتم تمييز العنصر باللون الأحمر مع توضيح سبب المشكلة.
+يجب أن تكون التمييزات مرئية بوضوح داخل الصفحة، وتظل ظاهرة حتى اكتمال استخراج البيانات، ثم يُغلق التبويب تلقائيًا بعد حفظ النتائج.
+
+مهم: يجب أن تتم هذه التمييزات فعليًا على عناصر الصفحة الأصلية، وليس فقط في واجهة الإضافة أو جدول النتائج.
+متطلبات أساسية: انتظار تحميل الصفحة والعناصر قبل التفاعل معها، وعدم إغلاق تبويب الطلب قبل حفظ نتائجه، ومعالجة الأخطاء وإتاحة إعادة المحاولة، مع توفير زر بدء وإيقاف وتصدير النتائج إلى CSV.
+
+
+
+(function () {
+    'use strict';
+
+    const tableSelector = "#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div:nth-child(2) > div > div.mt-9.my-5 > div > div.overflow-x-auto.w-full > table > tbody";
+    const paginationSelector = "#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div:nth-child(2) > div > div.mt-9.my-5 > div > div:nth-child(5) > ul";
+
+    const data = new Map();
+
+    let running = false;
+    let lastPageKey = "";
+
+    // ===== UI =====
+    const panel = document.createElement('div');
+    panel.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        width: 500px;
+        height: 520px;
+        background: #0b0b0b;
+        color: #00ff99;
+        z-index: 999999;
+        font-family: monospace;
+        border: 1px solid #00ff99;
+        border-radius: 10px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    `;
+
+    panel.innerHTML = `
+        <div style="padding:10px;display:flex;justify-content:space-between;gap:5px;border-bottom:1px solid #00ff99">
+            <b>FR CRAWLER</b>
+
+            <div>
+                <button id="toggle">Start</button>
+                <button id="clean">Clean</button>
+                <button id="csv">CSV</button>
+            </div>
+        </div>
+
+        <div style="padding:5px;border-bottom:1px solid #00ff99;font-size:11px">
+            Page: <span id="pageInfo">-</span> | Items: <span id="count">0</span>
+        </div>
+
+        <div style="flex:1;overflow:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead>
+                    <tr>
+                        <th style="border-bottom:1px solid #00ff99">FR</th>
+                        <th style="border-bottom:1px solid #00ff99">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="body"></tbody>
+            </table>
+        </div>
+    `;
+
+    document.body.appendChild(panel);
+
+    const body = panel.querySelector("#body");
+    const pageInfo = panel.querySelector("#pageInfo");
+    const count = panel.querySelector("#count");
+
+    // ===== buttons =====
+    panel.querySelector("#toggle").onclick = () => {
+        running = !running;
+        panel.querySelector("#toggle").textContent = running ? "Stop" : "Start";
+        if (running) loop();
+    };
+
+    panel.querySelector("#clean").onclick = () => {
+        data.clear();
+        render();
+    };
+
+    panel.querySelector("#csv").onclick = exportCSV;
+
+    // ===== scan =====
+    function scanPage() {
+        const tbody = document.querySelector(tableSelector);
+        if (!tbody) return false;
+
+        let updated = false;
+
+        const rows = tbody.querySelectorAll("tr");
+
+        rows.forEach(row => {
+            const cols = row.querySelectorAll("td");
+            if (cols.length < 7) return;
+
+            const fr = row.innerText.match(/\bFR\d+\b/);
+            const status = cols[6]?.innerText?.trim();
+
+            if (fr && status) {
+                if (!data.has(fr[0]) || data.get(fr[0]) !== status) {
+                    data.set(fr[0], status);
+                    updated = true;
+                }
+            }
+        });
+
+        return updated;
+    }
+
+    // ===== detect page number (FIX for direction issue) =====
+    function getPageKey() {
+        const pag = document.querySelector(paginationSelector);
+        if (!pag) return "";
+
+        const active = pag.querySelector(".active, [aria-current='page']");
+        return active ? active.innerText.trim() : pag.innerText.trim();
+    }
+
+    // ===== go next page safely =====
+    function goNextPage() {
+        const pag = document.querySelector(paginationSelector);
+        if (!pag) return false;
+
+        const buttons = [...pag.querySelectorAll("li, button, a")];
+
+        // current active index
+        const activeIndex = buttons.findIndex(b =>
+            b.classList.contains("active") ||
+            b.getAttribute("aria-current") === "page"
+        );
+
+        const next = buttons[activeIndex + 1];
+
+        if (next) {
+            next.click();
+            return true;
+        }
+
+        return false;
+    }
+
+    // ===== render =====
+    function render() {
+        body.innerHTML = [...data.entries()]
+            .map(([fr, status]) => `
+                <tr>
+                    <td style="padding:3px;border-bottom:1px solid #222">${fr}</td>
+                    <td style="padding:3px;border-bottom:1px solid #222">${status}</td>
+                </tr>
+            `).join('');
+
+        count.textContent = data.size;
+    }
+
+    // ===== CSV FIX (1 cell clean value) =====
+    function exportCSV() {
+        const rows = [["FR", "STATUS"]];
+
+        data.forEach((status, fr) => {
+            // تنظيف النص لمنع كسر الخلايا
+            const cleanStatus = `"${status.replace(/"/g, '""')}"`;
+            rows.push([fr, cleanStatus]);
+        });
+
+        const csv =
+            "\uFEFF" +
+            rows.map(r => r.join(",")).join("\n");
+
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "fr_data.csv";
+        a.click();
+
+        URL.revokeObjectURL(url);
+    }
+
+    // ===== main loop =====
+    async function loop() {
+        if (!running) return;
+
+        const pageKey = getPageKey();
+        pageInfo.textContent = pageKey;
+
+        const updated = scanPage();
+        render();
+
+        // لا تنتقل إلا إذا انتهينا من الصفحة الحالية
+        setTimeout(() => {
+            if (!running) return;
+
+            const moved = goNextPage();
+
+            if (!moved) {
+                running = false;
+                panel.querySelector("#toggle").textContent = "Start";
+                return;
+            }
+
+            // تأكيد تغيير الصفحة
+            setTimeout(() => {
+                const newKey = getPageKey();
+
+                if (newKey !== pageKey) {
+                    loop();
+                } else {
+                    setTimeout(loop, 2000);
+                }
+            }, 1500);
+
+        }, updated ? 1200 : 1500);
+    }
+
+    console.log("FR Crawler V2 Ready");
+})();
