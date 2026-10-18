@@ -1,0 +1,200 @@
+// ========================
+// Arrow Auto Click Extension
+// ========================
+
+console.log("🟢 Arrow extension loaded:", location.href);
+
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+
+// ========================
+// Settings
+// ========================
+
+const MAX_CLICKS = 6;
+const CLICK_INTERVAL = 100;
+
+const SCROLL_TIMES = 3;
+const SCROLL_INTERVAL = 500;
+
+
+
+// ========================
+// Scroll Function
+// ========================
+
+async function scrollToBottomRepeated(times = SCROLL_TIMES, interval = SCROLL_INTERVAL) {
+
+    console.log("⬇️ Starting scroll process");
+
+
+    for (let i = 1; i <= times; i++) {
+
+
+        const heightBefore = document.body.scrollHeight;
+
+
+        window.scrollTo({
+            top: heightBefore,
+            behavior: "smooth"
+        });
+
+
+        console.log(
+            `⬇️ Scroll ${i}/${times} - Height: ${heightBefore}px`
+        );
+
+
+        await delay(interval);
+
+
+        const heightAfter = document.body.scrollHeight;
+
+
+        if (heightAfter !== heightBefore) {
+
+            console.log(
+                `📈 Page height changed: ${heightBefore} → ${heightAfter}`
+            );
+
+        }
+
+    }
+
+
+    console.log(
+        "✅ Scroll completed"
+    );
+
+}
+
+
+
+// ========================
+// Arrow Click Function
+// ========================
+
+async function clickArrow() {
+
+
+    console.log(
+        "🔎 Searching arrow button..."
+    );
+
+
+    let clicked = 0;
+
+
+
+    while (clicked < MAX_CLICKS) {
+
+
+        const img = document.querySelector(
+            'button img[src$="left.svg"]'
+        );
+
+
+
+        if (!img) {
+
+            console.log(
+                "⏳ Arrow not found, waiting..."
+            );
+
+            await delay(500);
+
+            continue;
+        }
+
+
+
+        const btn = img.closest("button");
+
+
+
+        if (!btn) {
+
+            console.warn(
+                "⚠️ Arrow image found but button missing"
+            );
+
+            await delay(500);
+
+            continue;
+        }
+
+
+
+        console.log(
+            "✅ Arrow button found",
+            btn
+        );
+
+
+
+        try {
+
+
+            btn.dispatchEvent(
+                new MouseEvent(
+                    "click",
+                    {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                    }
+                )
+            );
+
+
+            clicked++;
+
+
+            console.log(
+                `🔘 Arrow click ${clicked}/${MAX_CLICKS}`
+            );
+
+
+
+        } catch(error) {
+
+
+            console.error(
+                "❌ Click error:",
+                error
+            );
+
+        }
+
+
+
+        await delay(
+            CLICK_INTERVAL
+        );
+
+    }
+
+
+
+    console.log(
+        "✅ Arrow clicks finished"
+    );
+
+
+    await delay(500);
+
+
+    await scrollToBottomRepeated();
+
+}
+
+
+
+// ========================
+// Start
+// ========================
+
+clickArrow();
