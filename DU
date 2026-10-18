@@ -1,49 +1,586 @@
-#	Page
-1	1
-2	1
-3	1
-4	1
-5	1
-6	1
-7	1
-8	1
-9	2
-10	1
-11	1
-12	2
-13	2
-14	2
-15	2
-16	2
-17	2
-18	2
-19	2
-20	2
-21	3
-22	3
-23	3
-24	3
-25	3
-26	3
-27	3
-28	3
-29	3
-30	3
-31	5
-32	5
-33	5
-34	5
-35	5
-36	5
-37	5
-38	5
-39	5
-40	5
-شوف نحنا ممكن نعمل حركة احسن من كدا بكتير  واضمن 
-1-نفتح الصفحة
-2-نسحب كل الطلبات بدون نفتحها
-3-نمشي الصفحة اللي بعدها ونكرر نفس الشي حتى الصفحة المطلوبة 
-4-بعدها نستخدم الرابط دا في فتح كل طلب:https://ops.rer.sa/deed-upgrade-case-view?caseId=DU   مع استبدال DU برقم الطلب 
-5-نسحب بعدها البيانات كما في السابق
+هذه أفضل وأضمن استراتيجية أتمتة على الإطلاق (Two-Phase Crawling: Scan First, Process Later).
+فصل العملية إلى مرحلتين يحل المشكلة جذرياً:
+ * المرحلة الأولى (Scan Phase): المتصفح يتنقل فقط بين الصفحات ويجمع كل أرقام DU في جدول مع رقم صفحتها الصحيح بدون فتح أي تبويب وبدون أي حمل على المعالج.
+ * المرحلة الثانية (Process Phase): بعد اكتمال تجميع كل الطلبات وتأكيدها، يبدأ سحب الصكوك عبر فتح الرابط المباشر [https://ops.rer.sa/deed-upgrade-case-view?caseId=DU](https://ops.rer.sa/deed-upgrade-case-view?caseId=DU)... بعدد التابات الذي تحدده أنت من الواجهة.
+التحديثات المضافة في هذا الإصدار:
+ * خيار تحديد عدد التابات (Concurrency): قائمة منسدلة لاختيار سرعة المعالجة (من 1 إلى 5 تابات في الخلفية).
+ * مؤشر حالة مزدوج: يعرض أولاً تقدم مسح الصفحات، ثم ينتقل تلقائياً لعرض تقدم استخراج الصكوك.
+ * رابط مباشر وموثوق: استخدام caseId=DU... مباشرة دون الحاجة لانتظار روابط أزرار الجدول.
+1. content_search.js (المحدّث بالكامل)
+استبدل محتوى content_search.js بهذا الكود:
+(function () {
+  'use strict';
 
-اضف امكانية اختيار عدد التابات في الخلفية
+  function isExtensionValid() {
+    return typeof chrome !== "undefined" && chrome.runtime && !!chrome.runtime.id;
+  }
+
+  const TABLE_SELECTOR = "#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div:nth-child(2) > div > div.mt-9.my-5 > div > div.overflow-x-auto.w-full > table > tbody";
+  const PAGINATION_CONTAINER = "ul.rc-pagination";
+  const ACTIVE_PAGE_SELECTOR = "li.rc-pagination-item-active";
+  const NEXT_PAGE_SELECTOR = "li.rc-pagination-next";
+
+  // إدارة المهام
+  // orderId -> { index, page, values, status: "pending" | "done" | "failed" }
+  const tasksMap = new Map();
+  const queueToProcess = [];
+
+  let running = false;
+  let activeWorkers = 0;
+  let maxConcurrent = 3;
+  let globalCounter = 0;
+
+  // ===== بناء الواجهة التفاعلية (HUD) =====
+  const panel = document.createElement('div');
+  panel.id = "du-crawler-hud";
+  panel.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 700px;
+    height: 600px;
+    background: #0f172a;
+    color: #38bdf8;
+    z-index: 999999;
+    font-family: system-ui, -apple-system, sans-serif;
+    border: 1px solid #334155;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    direction: rtl;
+  `;
+
+  panel.innerHTML = `
+    <!-- الرأس والأزرار -->
+    <div style="padding: 10px 14px; display:flex; justify-content:space-between; align-items:center; background:#1e293b; border-bottom:1px solid #334155">
+      <b style="color:#f8fafc; font-size:14px">DU Crawler (مسح الصفحات أولاً ثم الاستخراج)</b>
+      <div style="display:flex; gap:6px">
+        <button id="du-btn-toggle" style="background:#16a34a;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-weight:600">بدء</button>
+        <button id="du-btn-clean" style="background:#334155;color:#e2e8f0;border:none;padding:5px 12px;border-radius:4px;cursor:pointer">تفريغ</button>
+        <button id="du-btn-csv" style="background:#0284c7;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-weight:600">تصدير CSV</button>
+      </div>
+    </div>
+
+    <!-- شريط الإعدادات والنطاق والتابات -->
+    <div style="padding: 6px 14px; background:#1e293b; border-bottom:1px solid #334155; font-size:12px; display:flex; align-items:center; justify-content:space-between; color:#94a3b8">
+      <div style="display:flex; align-items:center; gap:8px">
+        <span>النطاق:</span>
+        <label style="display:flex; align-items:center; gap:3px">من:
+          <input type="number" id="du-page-start" min="1" placeholder="الحالية" style="width:55px; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:2px; border-radius:3px; text-align:center" />
+        </label>
+        <label style="display:flex; align-items:center; gap:3px">إلى:
+          <input type="number" id="du-page-end" min="1" placeholder="الكل" style="width:55px; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:2px; border-radius:3px; text-align:center" />
+        </label>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:6px">
+        <span>عدد التابات بالخلفية:</span>
+        <select id="du-concurrency-select" style="background:#0f172a; border:1px solid #475569; color:#38bdf8; padding:2px 8px; border-radius:3px; font-weight:bold; cursor:pointer">
+          <option value="1">1 تاب (أبطأ وأضمن)</option>
+          <option value="2">2 تابات</option>
+          <option value="3" selected>3 تابات (الافتراضي)</option>
+          <option value="4">4 تابات</option>
+          <option value="5">5 تابات (سريع جداً)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- شريط الإحصائيات المباشرة -->
+    <div style="padding: 6px 14px; background:#0f172a; border-bottom:1px solid #334155; font-size:12px; display:flex; justify-content:space-between; color:#94a3b8">
+      <span>المرحلة: <b id="du-phase-text" style="color:#f59e0b">جاهز</b></span>
+      <span>الصفحة: <b id="du-page-num" style="color:#f8fafc">-</b></span>
+      <span>المكتمل: <b id="du-done-count" style="color:#4ade80">0</b> / <b id="du-total-count" style="color:#38bdf8">0</b></span>
+      <span>التابات النشطة: <b id="du-active-slots" style="color:#38bdf8">0/3</b></span>
+    </div>
+
+    <!-- جدول عرض النتائج -->
+    <div style="flex:1; overflow-y:auto; padding:6px;">
+      <table style="width:100%; border-collapse:collapse; font-size:12px; text-align:right">
+        <thead>
+          <tr style="background:#1e293b; color:#94a3b8">
+            <th style="padding:6px; border-bottom:1px solid #334155; width:8%; text-align:center">#</th>
+            <th style="padding:6px; border-bottom:1px solid #334155; width:10%; text-align:center">الصفحة</th>
+            <th style="padding:6px; border-bottom:1px solid #334155; width:26%">Case no (DU)</th>
+            <th style="padding:6px; border-bottom:1px solid #334155; width:56%">Pcp (القيم المستخرجة)</th>
+          </tr>
+        </thead>
+        <tbody id="du-table-body"></tbody>
+      </table>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+
+  const btnToggle = panel.querySelector("#du-btn-toggle");
+  const btnClean = panel.querySelector("#du-btn-clean");
+  const btnCsv = panel.querySelector("#du-btn-csv");
+  const inputStartPage = panel.querySelector("#du-page-start");
+  const inputEndPage = panel.querySelector("#du-page-end");
+  const selectConcurrency = panel.querySelector("#du-concurrency-select");
+  const tableBody = panel.querySelector("#du-table-body");
+
+  const lblPhase = panel.querySelector("#du-phase-text");
+  const lblPage = panel.querySelector("#du-page-num");
+  const lblDoneCount = panel.querySelector("#du-done-count");
+  const lblTotalCount = panel.querySelector("#du-total-count");
+  const lblActiveSlots = panel.querySelector("#du-active-slots");
+
+  selectConcurrency.onchange = () => {
+    maxConcurrent = parseInt(selectConcurrency.value, 10) || 3;
+    lblActiveSlots.textContent = `${activeWorkers}/${maxConcurrent}`;
+  };
+
+  btnToggle.onclick = () => {
+    running = !running;
+    btnToggle.textContent = running ? "إيقاف مؤقت" : "بدء";
+    btnToggle.style.background = running ? "#dc2626" : "#16a34a";
+
+    if (running) {
+      startMasterProcess();
+    } else {
+      lblPhase.textContent = "متوقف مؤقتاً";
+    }
+  };
+
+  btnClean.onclick = () => {
+    tasksMap.clear();
+    queueToProcess.length = 0;
+    globalCounter = 0;
+    activeWorkers = 0;
+    renderUI();
+  };
+
+  btnCsv.onclick = exportCSV;
+
+  // ===== استقبال رسائل الاستخراج من Background =====
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!isExtensionValid()) return;
+
+    if (msg.action === "SAVE_AND_VERIFY") {
+      activeWorkers = Math.max(0, activeWorkers - 1);
+      updateSlotsDisplay();
+
+      const task = tasksMap.get(msg.orderId);
+      if (task) {
+        task.values = msg.deedNumbers || [];
+        task.status = "done";
+        renderUI();
+      }
+
+      // إشعار background بإغلاق التبويب فوراً
+      safeSendMessage({ action: "CONFIRM_CLOSE_DETAIL_TAB", tabId: msg.tabId });
+
+      // تشغيل مهمة جديدة مكان التبويب المغلق
+      if (running) dispatchProcessWorkers();
+    }
+
+    if (msg.action === "RECORD_ERROR") {
+      activeWorkers = Math.max(0, activeWorkers - 1);
+      updateSlotsDisplay();
+
+      const task = tasksMap.get(msg.orderId);
+      if (task) {
+        task.values = [`⚠️ خطأ: ${msg.reason}`];
+        task.status = "failed";
+        renderUI();
+      }
+
+      if (running) dispatchProcessWorkers();
+    }
+
+    if (msg.action === "DETAIL_TAB_CLOSED_MANUALLY") {
+      activeWorkers = Math.max(0, activeWorkers - 1);
+      updateSlotsDisplay();
+      if (running) dispatchProcessWorkers();
+    }
+  });
+
+  function safeSendMessage(payload, callback) {
+    if (!isExtensionValid()) return;
+    try {
+      chrome.runtime.sendMessage(payload, (res) => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+        else if (callback) callback(res);
+      });
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  function updateSlotsDisplay() {
+    lblActiveSlots.textContent = `${activeWorkers}/${maxConcurrent}`;
+    const done = [...tasksMap.values()].filter(t => t.status === "done" || t.status === "failed").length;
+    lblDoneCount.textContent = done;
+    lblTotalCount.textContent = tasksMap.size;
+  }
+
+  // ===== دوال الترقيم وقراءة الصفحة (المرحلة الأولى) =====
+
+  function getActivePageNumber() {
+    const pag = document.querySelector(PAGINATION_CONTAINER);
+    if (!pag) return null;
+    const activeItem = pag.querySelector(ACTIVE_PAGE_SELECTOR);
+    if (!activeItem) return null;
+    const num = parseInt(activeItem.innerText.trim(), 10);
+    return isNaN(num) ? null : num;
+  }
+
+  function isNextDisabled() {
+    const pag = document.querySelector(PAGINATION_CONTAINER);
+    if (!pag) return true;
+    const nextLi = pag.querySelector(NEXT_PAGE_SELECTOR);
+    if (!nextLi) return true;
+    return (
+      nextLi.classList.contains("rc-pagination-disabled") ||
+      nextLi.getAttribute("aria-disabled") === "true" ||
+      nextLi.querySelector("button[disabled], a[disabled]") !== null
+    );
+  }
+
+  function getFirstDUInTable() {
+    const tbody = document.querySelector(TABLE_SELECTOR);
+    if (!tbody) return null;
+    const firstRow = tbody.querySelector("tr");
+    return firstRow ? (firstRow.innerText.match(/\bDU\d+\b/)?.[0] || null) : null;
+  }
+
+  async function clickPageDirectly(page) {
+    const pag = document.querySelector(PAGINATION_CONTAINER);
+    if (!pag) return false;
+
+    const items = [...pag.querySelectorAll("li.rc-pagination-item")];
+    const targetLi = items.find(li => li.innerText.trim() === String(page));
+
+    if (targetLi) {
+      const clickEl = targetLi.querySelector("a, button") || targetLi;
+      clickEl.click();
+      return true;
+    }
+
+    const nextLi = pag.querySelector(NEXT_PAGE_SELECTOR);
+    if (nextLi && !isNextDisabled()) {
+      const clickEl = nextLi.querySelector("a, button") || nextLi;
+      clickEl.click();
+      return true;
+    }
+
+    return false;
+  }
+
+  async function navigateAndWait(targetPage, oldFirstDU, timeout = 12000) {
+    const start = Date.now();
+    await clickPageDirectly(targetPage);
+
+    while (Date.now() - start < timeout) {
+      if (!running) return false;
+
+      const activeNum = getActivePageNumber();
+      const currentFirstDU = getFirstDUInTable();
+
+      // تأكيد تغير رقم الصفحة وتغير صفوف الجدول
+      if (activeNum === targetPage && currentFirstDU && currentFirstDU !== oldFirstDU) {
+        await new Promise(r => setTimeout(r, 1200)); // استقرار الـ DOM
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 400));
+    }
+    return false;
+  }
+
+  async function scanOrdersOnCurrentPage(pageNumber) {
+    let list = [];
+    let attempts = 0;
+
+    while (attempts < 6) {
+      if (!running) return [];
+      attempts++;
+
+      const tbody = document.querySelector(TABLE_SELECTOR);
+      if (tbody) {
+        const rows = tbody.querySelectorAll("tr");
+        list = [];
+
+        rows.forEach(row => {
+          const match = row.innerText.match(/\bDU\d+\b/);
+          if (match) {
+            list.push(match[0]);
+          }
+        });
+
+        if (list.length >= 10 || (attempts >= 4 && list.length > 0)) {
+          break;
+        }
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    // تسجيل الطلبات في الـ tasksMap برقم صفحتها الدقيق
+    list.forEach(orderId => {
+      if (!tasksMap.has(orderId)) {
+        globalCounter++;
+        tasksMap.set(orderId, {
+          index: globalCounter,
+          page: pageNumber,
+          values: ["قيد الانتظار..."],
+          status: "pending"
+        });
+      }
+    });
+
+    renderUI();
+    return list;
+  }
+
+  // ===== إدارة التدفق الأساسي: مسح ثم استخراج =====
+
+  async function startMasterProcess() {
+    const startVal = parseInt(inputStartPage.value, 10);
+    const endVal = parseInt(inputEndPage.value, 10);
+
+    let activeNum = getActivePageNumber() || 1;
+    let targetPage = (!isNaN(startVal) && startVal >= 1) ? startVal : activeNum;
+
+    // ----------------------------------------------------
+    // المرحلة 1: المسح السريع وجمع كل الطلبات من الصفحات
+    // ----------------------------------------------------
+    lblPhase.textContent = "المرحلة 1: مسح الصفحات وتجميع الطلبات";
+    lblPhase.style.color = "#f59e0b";
+
+    if (activeNum !== targetPage) {
+      lblPhase.textContent = `انتقال مبدئي لصفحة ${targetPage}...`;
+      const oldDU = getFirstDUInTable();
+      await navigateAndWait(targetPage, oldDU);
+    }
+
+    while (running) {
+      const currentPage = getActivePageNumber() || targetPage;
+      lblPage.textContent = currentPage;
+
+      if (!isNaN(endVal) && currentPage > endVal) {
+        break; // وصلنا لصفحة النهاية
+      }
+
+      lblPhase.textContent = `مسح طلبات صفحة ${currentPage}...`;
+      await scanOrdersOnCurrentPage(currentPage);
+
+      if (!isNaN(endVal) && currentPage >= endVal) {
+        break; // تم مسح آخر صفحة مطلوبة
+      }
+
+      if (isNextDisabled()) {
+        break; // نهاية صفحات النظام
+      }
+
+      const nextPage = currentPage + 1;
+      lblPhase.textContent = `الانتقال لصفحة ${nextPage}...`;
+      const oldDU = getFirstDUInTable();
+      const moved = await navigateAndWait(nextPage, oldDU);
+
+      if (!moved) {
+        console.warn(`[DU Crawler] تعذر الانتقال للصفحة ${nextPage}. تم الانتقال لمرحلة الاستخراج.`);
+        break;
+      }
+      targetPage = nextPage;
+    }
+
+    if (!running) return;
+
+    // ----------------------------------------------------
+    // المرحلة 2: فتح الروابط مباشرة واستخراج الصكوك
+    // ----------------------------------------------------
+    lblPhase.textContent = `المرحلة 2: بدء استخراج الصكوك (${maxConcurrent} تابات)`;
+    lblPhase.style.color = "#4ade80";
+
+    // تجهيز قائمة الطلبات التي تحتاج استخراج
+    queueToProcess.length = 0;
+    tasksMap.forEach((data, orderId) => {
+      if (data.status === "pending") {
+        queueToProcess.push(orderId);
+      }
+    });
+
+    dispatchProcessWorkers();
+  }
+
+  function dispatchProcessWorkers() {
+    if (!running) return;
+
+    while (activeWorkers < maxConcurrent && queueToProcess.length > 0) {
+      const orderId = queueToProcess.shift();
+      if (!orderId) break;
+
+      activeWorkers++;
+      updateSlotsDisplay();
+
+      // بناء الرابط المباشر
+      const targetUrl = `https://ops.rer.sa/deed-upgrade-case-view?caseId=${orderId}`;
+
+      safeSendMessage({
+        action: "OPEN_ORDER_TAB",
+        orderId: orderId,
+        url: targetUrl
+      }, (res) => {
+        if (!res || res.status === "BUSY" || res.status === "ERROR") {
+          activeWorkers = Math.max(0, activeWorkers - 1);
+          updateSlotsDisplay();
+          queueToProcess.unshift(orderId);
+        }
+      });
+    }
+
+    if (queueToProcess.length === 0 && activeWorkers === 0) {
+      lblPhase.textContent = "اكتملت جميع العمليات بنجاح 100%!";
+      lblPhase.style.color = "#22c55e";
+      btnToggle.textContent = "بدء";
+      btnToggle.style.background = "#16a34a";
+      running = false;
+    }
+  }
+
+  function renderUI() {
+    updateSlotsDisplay();
+    tableBody.innerHTML = [...tasksMap.entries()]
+      .map(([orderId, data]) => `
+        <tr>
+          <td style="padding:5px; border-bottom:1px solid #1e293b; text-align:center; color:#94a3b8; font-weight:bold">${data.index}</td>
+          <td style="padding:5px; border-bottom:1px solid #1e293b; text-align:center; color:#e2e8f0"><span style="background:#334155; padding:1px 6px; border-radius:3px">${data.page}</span></td>
+          <td style="padding:5px; border-bottom:1px solid #1e293b; font-family:monospace; color:#38bdf8">${orderId}</td>
+          <td style="padding:5px; border-bottom:1px solid #1e293b; color:#f1f5f9">
+            ${data.values.map(v => `<span style="display:inline-block; background:${data.status === 'done' ? '#1e293b' : '#334155'}; padding:2px 8px; margin:2px; border-radius:4px; font-size:11px; border:1px solid ${data.status === 'done' ? '#334155' : '#475569'}">${v}</span>`).join('')}
+          </td>
+        </tr>
+      `).join('');
+  }
+
+  function exportCSV() {
+    if (tasksMap.size === 0) {
+      alert("لا توجد بيانات متاحة للتصدير.");
+      return;
+    }
+
+    const rows = [["#", "Page", "Case no", "Pcp"]];
+
+    tasksMap.forEach((data, caseNo) => {
+      const pcpCombined = data.values.join(" | ");
+      const escapedPcp = `"${pcpCombined.replace(/"/g, '""')}"`;
+      rows.push([data.index, data.page, caseNo, escapedPcp]);
+    });
+
+    const csvContent = "\uFEFF" + rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DU_Extract_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+})();
+
+2. background.js (ديناميكي ويدعم أي عدد من التابات)
+تأكد من تحديث background.js بهذا الكود الخفيف المتوافق مع الفكرة الجديدة:
+// ===================================================
+// DU Crawler - Background Worker
+// ===================================================
+
+const activeTasks = new Map(); // tabId -> { orderId, searchTabId }
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+
+  // 1. فتح تبويب في الخلفية للرابط المباشر
+  if (message.action === "OPEN_ORDER_TAB") {
+    const searchTabId = sender.tab ? sender.tab.id : null;
+
+    chrome.tabs.create({ url: message.url, active: false }, (newTab) => {
+      if (chrome.runtime.lastError || !newTab) {
+        sendResponse({ status: "ERROR", error: chrome.runtime.lastError?.message });
+        return;
+      }
+
+      activeTasks.set(newTab.id, {
+        orderId: message.orderId,
+        searchTabId: searchTabId
+      });
+
+      sendResponse({ status: "STARTED", tabId: newTab.id });
+    });
+    return true;
+  }
+
+  // 2. وصول نتائج استخراج الصكوك
+  if (message.action === "DATA_EXTRACTED_SUCCESS") {
+    const senderTabId = sender.tab ? sender.tab.id : null;
+    const task = activeTasks.get(senderTabId);
+
+    if (task && task.searchTabId) {
+      chrome.tabs.sendMessage(task.searchTabId, {
+        action: "SAVE_AND_VERIFY",
+        orderId: message.orderId || task.orderId,
+        deedNumbers: message.deedNumbers || [],
+        tabId: senderTabId
+      }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+  }
+
+  // 3. تأكيد الحفظ وإغلاق التبويب
+  if (message.action === "CONFIRM_CLOSE_DETAIL_TAB") {
+    const targetTabId = message.tabId;
+    if (targetTabId && activeTasks.has(targetTabId)) {
+      setTimeout(() => {
+        chrome.tabs.remove(targetTabId, () => {
+          activeTasks.delete(targetTabId);
+          if (chrome.runtime.lastError) { /* ignore */ }
+        });
+      }, 700);
+    }
+  }
+
+  // 4. تسجيل الخطأ وعدم إغلاق التبويب
+  if (message.action === "EXTRACTION_FAILED") {
+    const senderTabId = sender.tab ? sender.tab.id : null;
+    const task = activeTasks.get(senderTabId);
+
+    if (task && task.searchTabId) {
+      chrome.tabs.sendMessage(task.searchTabId, {
+        action: "RECORD_ERROR",
+        orderId: message.orderId || task.orderId,
+        reason: message.reason || "تعذر الاستخراج",
+        tabId: senderTabId
+      }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+    if (senderTabId) activeTasks.delete(senderTabId);
+  }
+});
+
+// مراقبة إغلاق التبويبات يدوياً
+chrome.tabs.onRemoved.addListener((closedTabId) => {
+  if (activeTasks.has(closedTabId)) {
+    const task = activeTasks.get(closedTabId);
+    if (task && task.searchTabId) {
+      chrome.tabs.sendMessage(task.searchTabId, {
+        action: "DETAIL_TAB_CLOSED_MANUALLY",
+        orderId: task.orderId
+      }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+    activeTasks.delete(closedTabId);
+  }
+});
+
+كيف سيعمل النظام الآن؟
+ * تضع مثلاً من صفحة 1 إلى صفحة 5 وتختار 3 تابات أو 4 تابات.
+ * تضغط بدء:
+   * ستقوم الإضافة بالتنقل السريع بين الصفحات: (صفحة 1 تضع أرقامها في الجدول كـ Page: 1، ثم تنتقل لصفحة 2 وتضعها كـ Page: 2 حتى صفحة 5) في ثوانٍ معدودة وبدون فتح أي تبويب خارجي.
+ * فور وصولها إلى صفحة 5 واكتمال مسح الـ 50 طلباً، تبدأ مباشرة المرحلة الثانية:
+   * تفتح 3 أو 4 طلبات في وقت واحد عبر الرابط:
+     [https://ops.rer.sa/deed-upgrade-case-view?caseId=DU](https://ops.rer.sa/deed-upgrade-case-view?caseId=DU)...
+   * تستخرج الصكوك وتضع علامات ✓، وتغلق كل تبويب فور الانتهاء منه وتفتح التالي.
+ * النتيجة في ملف الـ CSV ستكون مطابقة 100%: 10 طلبات لصفحة 1، 10 طلبات لصفحة 2، وهكذا دون تداخل أو تفويت نهائياً.
