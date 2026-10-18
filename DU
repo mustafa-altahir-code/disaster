@@ -1,155 +1,113 @@
-المشكلة التي ظهرت (فتح التبويبات بدون توقف + خطأ انتهاء المهلة) سببها ثغرة تدفق (Race Condition) بين content_search.js و background.js:
- * حلقة التكرار السريعة (while loop): كانت دالة dispatchProcessWorkers() ترسل أوامر فتح التبويبات بالتتابع خلف بعضها في أجزاء من الثانية قبل أن يُنشئ المتصفح التبويب فعلياً، مما جعل المتصفح يفتح عشرات التبويبات دفعة واحدة فينهار المعالج والذاكرة، وتتأخر استجابة الصفحات فتظهر رسالة: انتهت المهلة بانتظار العنصر.
- * غياب إدارة الطابور المركزية داخل background.js: كان من المفترض ألا يقوم content_search بفتح أي تبويب مباشرة، بل يُسلّم القائمة كاملة إلى background.js، وهو المسؤول الحصري عن قفل العدد (Active Tabs Semaphore) بحيث لا يفتح تبويباً جديداً إلا بعد إغلاق التبويب السابق تماماً.
-الحل الجذري المطبق:
- * نقل التحكم في فتح التبويبات بالكامل إلى background.js:
-   * لوحة التحكم ترسل قائمة الطلبات كاملة مع الحد الأقصى المطلوب (مثلاً: 1 أو 2 أو 3).
-   * الـ background يحتفظ بـ Semaphore صارم؛ إذا اخترت 1 فلن يوجد في المتصفح سوى تبويب واحد فقط لا غير حتى ينتهي ويُغلق.
- * إغلاق التبويب حتى عند الفشل بعد مهلة:
-   * التبويب الذي يفشل أو تنتهي مهلته كان يظل مفتوحاً ويعلق العداد. الآن يتم تسجيل الخطأ وإغلاقه فوراً لتفريغ الخانة للطلب التالي.
- * زيادة مهلة انتظار العنصر في صفحة التفاصيل:
-   * ضبط المهلة إلى 20 ثانية مع تأخير زمني بسيط (Stagger Delay = 800ms) بين فتح كل تبويب وآخر لتقليل الضغط على سيرفر المنصة.
-1. background.js (إدارة الطابور والتحكم الصارم بعدد التبويبات)
-استبدل محتوى background.js بالكامل بهذا الكود:
-// ===================================================
-// DU Crawler - Centralized Queue Manager (Strict Concurrency)
-// ===================================================
+(function () {
+  'use strict';
 
-let maxConcurrent = 1; // الافتراضي
-let activeCount = 0;
-const pendingQueue = []; // قائمة الطلبات المنتظرة: [{ orderId, url }]
-const runningTasks = new Map(); // tabId -> { orderId, searchTabId }
-let mainSearchTabId = null;
+  const LIST_SELECTOR = "#upgrade-deed-real-estate-number";
 
-// معالجة الطابور بصرامة
-function pumpQueue() {
-  if (pendingQueue.length === 0 || activeCount >= maxConcurrent) {
-    return;
+  function getOrderIdFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("caseId") || params.get("requestId") || (document.body.innerText.match(/\bDU\d+\b/)?.[0] || null);
   }
 
-  while (activeCount < maxConcurrent && pendingQueue.length > 0) {
-    const item = pendingQueue.shift();
-    activeCount++;
+  function waitForElement(selector, timeout = 20000) {
+    return new Promise((resolve, reject) => {
+      const el = document.querySelector(selector);
+      if (el) return resolve(el);
 
-    chrome.tabs.create({ url: item.url, active: false }, (newTab) => {
-      if (chrome.runtime.lastError || !newTab) {
-        activeCount = Math.max(0, activeCount - 1);
-        // إعادة المحاولة في حال تعذر فتح التبويب
-        pendingQueue.unshift(item);
-        return;
+      const observer = new MutationObserver(() => {
+        const target = document.querySelector(selector);
+        if (target) {
+          observer.disconnect();
+          resolve(target);
+        }
+      });
+
+      observer.observe(document.body, { childList: true, subtree: true });
+
+      setTimeout(() => {
+        observer.disconnect();
+        reject(new Error(`انتهت مهلة 20 ثانية بانتظار: ${selector}`));
+      }, timeout);
+    });
+  }
+
+  async function executeExtraction() {
+    const orderId = getOrderIdFromUrl();
+
+    try {
+      // انتظار القائمة مع إعطاء مهلة كافية لسيرفر المنصة
+      const listElement = await waitForElement(LIST_SELECTOR, 20000);
+      listElement.classList.add("du-highlight-green");
+
+      await new Promise(r => setTimeout(r, 400));
+
+      const extractedValues = [];
+
+      if (listElement.tagName.toLowerCase() === "select") {
+        const options = [...listElement.options].filter(o => o.value && o.value.trim() !== "");
+        options.forEach(opt => {
+          const txt = opt.text.trim();
+          if (txt && !extractedValues.includes(txt)) extractedValues.push(txt);
+        });
+      } else {
+        const subItems = listElement.querySelectorAll("li, tr, div[role='option'], .option, span, p");
+        if (subItems.length > 0) {
+          subItems.forEach(item => {
+            const val = item.innerText.trim();
+            if (val && !extractedValues.includes(val)) {
+              extractedValues.push(val);
+              item.classList.add("du-highlight-green");
+              const badge = document.createElement("span");
+              badge.className = "du-badge-check";
+              badge.textContent = "✓";
+              item.prepend(badge);
+            }
+          });
+        } else {
+          const directVal = listElement.value || listElement.innerText.trim();
+          if (directVal) {
+            extractedValues.push(directVal);
+            const badge = document.createElement("span");
+            badge.className = "du-badge-check";
+            badge.textContent = "✓";
+            listElement.parentNode.insertBefore(badge, listElement.nextSibling);
+          }
+        }
       }
 
-      runningTasks.set(newTab.id, {
-        orderId: item.orderId,
-        searchTabId: mainSearchTabId
+      if (extractedValues.length === 0) {
+        throw new Error("العنصر فارغ ولا يحتوي على صكوك");
+      }
+
+      // إرسال النجاح
+      chrome.runtime.sendMessage({
+        action: "DATA_EXTRACTED_SUCCESS",
+        orderId: orderId,
+        deedNumbers: extractedValues
       });
 
-      // إشعار لوحة البحث بعدد التابات النشطة الحقيقي
-      notifySearchTab("SLOTS_UPDATED", { activeCount, remaining: pendingQueue.length });
-    });
-  }
-}
-
-function notifySearchTab(action, payload = {}) {
-  if (mainSearchTabId) {
-    chrome.tabs.sendMessage(mainSearchTabId, { action, ...payload }, () => {
-      if (chrome.runtime.lastError) { /* ignore */ }
-    });
-  }
-}
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-
-  // 1. بدء تشغيل قائمة الطلبات من لوحة التحكم
-  if (message.action === "START_BATCH_EXTRACTION") {
-    mainSearchTabId = sender.tab ? sender.tab.id : null;
-    maxConcurrent = message.concurrency || 1;
-    
-    // تفريغ أي طابور قديم وإضافة الطلبات الجديدة
-    pendingQueue.length = 0;
-    message.items.forEach(item => pendingQueue.push(item));
-
-    sendResponse({ status: "QUEUE_ACCEPTED", total: pendingQueue.length });
-    pumpQueue();
-    return true;
-  }
-
-  // 2. إيقاف مؤقت للعملية
-  if (message.action === "PAUSE_BATCH_EXTRACTION") {
-    pendingQueue.length = 0;
-    sendResponse({ status: "PAUSED" });
-    return true;
-  }
-
-  // 3. وصول البيانات بنجاح من صفحة الطلب
-  if (message.action === "DATA_EXTRACTED_SUCCESS") {
-    const senderTabId = sender.tab ? sender.tab.id : null;
-    const task = runningTasks.get(senderTabId);
-
-    if (task && task.searchTabId) {
-      chrome.tabs.sendMessage(task.searchTabId, {
-        action: "RECORD_SUCCESS",
-        orderId: message.orderId || task.orderId,
-        deedNumbers: message.deedNumbers || []
-      }, () => {
-        if (chrome.runtime.lastError) { /* ignore */ }
+    } catch (err) {
+      console.warn("[DU Detail Extractor]:", err.message);
+      // إرسال تقرير الفشل ليغلق background التبويب ويتابع ما بعده دون تعليق
+      chrome.runtime.sendMessage({
+        action: "EXTRACTION_FAILED",
+        orderId: orderId,
+        reason: err.message
       });
     }
-
-    // إغلاق التبويب فوراً وتحرير الخانة في الطابور
-    if (senderTabId) {
-      setTimeout(() => {
-        chrome.tabs.remove(senderTabId, () => {
-          runningTasks.delete(senderTabId);
-          activeCount = Math.max(0, activeCount - 1);
-          notifySearchTab("SLOTS_UPDATED", { activeCount, remaining: pendingQueue.length });
-          pumpQueue(); // تشغيل الطلب التالي
-        });
-      }, 600);
-    }
   }
 
-  // 4. حدوث خطأ أو انتهاء المهلة في صفحة الطلب
-  if (message.action === "EXTRACTION_FAILED") {
-    const senderTabId = sender.tab ? sender.tab.id : null;
-    const task = runningTasks.get(senderTabId);
-
-    if (task && task.searchTabId) {
-      chrome.tabs.sendMessage(task.searchTabId, {
-        action: "RECORD_FAILURE",
-        orderId: message.orderId || task.orderId,
-        reason: message.reason || "خطأ غير محدد"
-      }, () => {
-        if (chrome.runtime.lastError) { /* ignore */ }
-      });
-    }
-
-    // إغلاق التبويب حتى لا يعلق المتصفح بعد تسجيل الخطأ
-    if (senderTabId) {
-      setTimeout(() => {
-        chrome.tabs.remove(senderTabId, () => {
-          runningTasks.delete(senderTabId);
-          activeCount = Math.max(0, activeCount - 1);
-          notifySearchTab("SLOTS_UPDATED", { activeCount, remaining: pendingQueue.length });
-          pumpQueue(); // تشغيل الطلب التالي
-        });
-      }, 1000);
-    }
+  if (document.readyState === "complete") {
+    setTimeout(executeExtraction, 1000);
+  } else {
+    window.addEventListener("load", () => setTimeout(executeExtraction, 1000));
   }
-});
+})();
 
-// في حال تم إغلاق التبويب يدوياً
-chrome.tabs.onRemoved.addListener((closedTabId) => {
-  if (runningTasks.has(closedTabId)) {
-    runningTasks.delete(closedTabId);
-    activeCount = Math.max(0, activeCount - 1);
-    notifySearchTab("SLOTS_UPDATED", { activeCount, remaining: pendingQueue.length });
-    pumpQueue();
-  }
-});
 
-2. content_search.js (تجميع الطلبات وإرسالها كدفعة واحدة للطابور)
-استبدل محتوى content_search.js بالكامل:
+
+
+
+
 (function () {
   'use strict';
 
@@ -540,117 +498,147 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
   }
 })();
 
-3. content_detail.js (زيادة مهلة الانتظار وحماية التبويب من التجمد)
-استبدل محتوى content_detail.js بهذا الكود لضمان عدم حدوث Timeout عند بطء السيرفر:
-(function () {
-  'use strict';
 
-  const LIST_SELECTOR = "#upgrade-deed-real-estate-number";
 
-  function getOrderIdFromUrl() {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("caseId") || params.get("requestId") || (document.body.innerText.match(/\bDU\d+\b/)?.[0] || null);
+
+
+
+
+
+
+// ===================================================
+// DU Crawler - Centralized Queue Manager (Strict Concurrency)
+// ===================================================
+
+let maxConcurrent = 1; // الافتراضي
+let activeCount = 0;
+const pendingQueue = []; // قائمة الطلبات المنتظرة: [{ orderId, url }]
+const runningTasks = new Map(); // tabId -> { orderId, searchTabId }
+let mainSearchTabId = null;
+
+// معالجة الطابور بصرامة
+function pumpQueue() {
+  if (pendingQueue.length === 0 || activeCount >= maxConcurrent) {
+    return;
   }
 
-  function waitForElement(selector, timeout = 20000) {
-    return new Promise((resolve, reject) => {
-      const el = document.querySelector(selector);
-      if (el) return resolve(el);
+  while (activeCount < maxConcurrent && pendingQueue.length > 0) {
+    const item = pendingQueue.shift();
+    activeCount++;
 
-      const observer = new MutationObserver(() => {
-        const target = document.querySelector(selector);
-        if (target) {
-          observer.disconnect();
-          resolve(target);
-        }
+    chrome.tabs.create({ url: item.url, active: false }, (newTab) => {
+      if (chrome.runtime.lastError || !newTab) {
+        activeCount = Math.max(0, activeCount - 1);
+        // إعادة المحاولة في حال تعذر فتح التبويب
+        pendingQueue.unshift(item);
+        return;
+      }
+
+      runningTasks.set(newTab.id, {
+        orderId: item.orderId,
+        searchTabId: mainSearchTabId
       });
 
-      observer.observe(document.body, { childList: true, subtree: true });
-
-      setTimeout(() => {
-        observer.disconnect();
-        reject(new Error(`انتهت مهلة 20 ثانية بانتظار: ${selector}`));
-      }, timeout);
+      // إشعار لوحة البحث بعدد التابات النشطة الحقيقي
+      notifySearchTab("SLOTS_UPDATED", { activeCount, remaining: pendingQueue.length });
     });
   }
+}
 
-  async function executeExtraction() {
-    const orderId = getOrderIdFromUrl();
+function notifySearchTab(action, payload = {}) {
+  if (mainSearchTabId) {
+    chrome.tabs.sendMessage(mainSearchTabId, { action, ...payload }, () => {
+      if (chrome.runtime.lastError) { /* ignore */ }
+    });
+  }
+}
 
-    try {
-      // انتظار القائمة مع إعطاء مهلة كافية لسيرفر المنصة
-      const listElement = await waitForElement(LIST_SELECTOR, 20000);
-      listElement.classList.add("du-highlight-green");
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
-      await new Promise(r => setTimeout(r, 400));
+  // 1. بدء تشغيل قائمة الطلبات من لوحة التحكم
+  if (message.action === "START_BATCH_EXTRACTION") {
+    mainSearchTabId = sender.tab ? sender.tab.id : null;
+    maxConcurrent = message.concurrency || 1;
+    
+    // تفريغ أي طابور قديم وإضافة الطلبات الجديدة
+    pendingQueue.length = 0;
+    message.items.forEach(item => pendingQueue.push(item));
 
-      const extractedValues = [];
+    sendResponse({ status: "QUEUE_ACCEPTED", total: pendingQueue.length });
+    pumpQueue();
+    return true;
+  }
 
-      if (listElement.tagName.toLowerCase() === "select") {
-        const options = [...listElement.options].filter(o => o.value && o.value.trim() !== "");
-        options.forEach(opt => {
-          const txt = opt.text.trim();
-          if (txt && !extractedValues.includes(txt)) extractedValues.push(txt);
+  // 2. إيقاف مؤقت للعملية
+  if (message.action === "PAUSE_BATCH_EXTRACTION") {
+    pendingQueue.length = 0;
+    sendResponse({ status: "PAUSED" });
+    return true;
+  }
+
+  // 3. وصول البيانات بنجاح من صفحة الطلب
+  if (message.action === "DATA_EXTRACTED_SUCCESS") {
+    const senderTabId = sender.tab ? sender.tab.id : null;
+    const task = runningTasks.get(senderTabId);
+
+    if (task && task.searchTabId) {
+      chrome.tabs.sendMessage(task.searchTabId, {
+        action: "RECORD_SUCCESS",
+        orderId: message.orderId || task.orderId,
+        deedNumbers: message.deedNumbers || []
+      }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+
+    // إغلاق التبويب فوراً وتحرير الخانة في الطابور
+    if (senderTabId) {
+      setTimeout(() => {
+        chrome.tabs.remove(senderTabId, () => {
+          runningTasks.delete(senderTabId);
+          activeCount = Math.max(0, activeCount - 1);
+          notifySearchTab("SLOTS_UPDATED", { activeCount, remaining: pendingQueue.length });
+          pumpQueue(); // تشغيل الطلب التالي
         });
-      } else {
-        const subItems = listElement.querySelectorAll("li, tr, div[role='option'], .option, span, p");
-        if (subItems.length > 0) {
-          subItems.forEach(item => {
-            const val = item.innerText.trim();
-            if (val && !extractedValues.includes(val)) {
-              extractedValues.push(val);
-              item.classList.add("du-highlight-green");
-              const badge = document.createElement("span");
-              badge.className = "du-badge-check";
-              badge.textContent = "✓";
-              item.prepend(badge);
-            }
-          });
-        } else {
-          const directVal = listElement.value || listElement.innerText.trim();
-          if (directVal) {
-            extractedValues.push(directVal);
-            const badge = document.createElement("span");
-            badge.className = "du-badge-check";
-            badge.textContent = "✓";
-            listElement.parentNode.insertBefore(badge, listElement.nextSibling);
-          }
-        }
-      }
-
-      if (extractedValues.length === 0) {
-        throw new Error("العنصر فارغ ولا يحتوي على صكوك");
-      }
-
-      // إرسال النجاح
-      chrome.runtime.sendMessage({
-        action: "DATA_EXTRACTED_SUCCESS",
-        orderId: orderId,
-        deedNumbers: extractedValues
-      });
-
-    } catch (err) {
-      console.warn("[DU Detail Extractor]:", err.message);
-      // إرسال تقرير الفشل ليغلق background التبويب ويتابع ما بعده دون تعليق
-      chrome.runtime.sendMessage({
-        action: "EXTRACTION_FAILED",
-        orderId: orderId,
-        reason: err.message
-      });
+      }, 600);
     }
   }
 
-  if (document.readyState === "complete") {
-    setTimeout(executeExtraction, 1000);
-  } else {
-    window.addEventListener("load", () => setTimeout(executeExtraction, 1000));
-  }
-})();
+  // 4. حدوث خطأ أو انتهاء المهلة في صفحة الطلب
+  if (message.action === "EXTRACTION_FAILED") {
+    const senderTabId = sender.tab ? sender.tab.id : null;
+    const task = runningTasks.get(senderTabId);
 
-طريقة التشغيل الآن:
- * حدّث الملفات الثلاثة: background.js و content_search.js و content_detail.js.
- * ادخل إلى chrome://extensions/ واضغط Reload.
- * أعد تحميل صفحة [https://ops.rer.sa/deed-upgrade-dashboard](https://ops.rer.sa/deed-upgrade-dashboard) بـ (F5).
- * اختر من الواجهة: 1 تاب (أضمن خيار بدون أخطاء) واضغط بدء:
-   * ستمر الإضافة على الصفحات بسرعة وتجمع الأرقام كأرقام صفحات دقيقة.
-   * ستفتح تبويباً واحداً فقط في الخلفية، تنتظر استخراجه وحفظه، ثم تغلقه وتفتح الذي يليه بسلاسة تامة ودون أي تراكم أو رسائل انتهاء مهلة.
+    if (task && task.searchTabId) {
+      chrome.tabs.sendMessage(task.searchTabId, {
+        action: "RECORD_FAILURE",
+        orderId: message.orderId || task.orderId,
+        reason: message.reason || "خطأ غير محدد"
+      }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+
+    // إغلاق التبويب حتى لا يعلق المتصفح بعد تسجيل الخطأ
+    if (senderTabId) {
+      setTimeout(() => {
+        chrome.tabs.remove(senderTabId, () => {
+          runningTasks.delete(senderTabId);
+          activeCount = Math.max(0, activeCount - 1);
+          notifySearchTab("SLOTS_UPDATED", { activeCount, remaining: pendingQueue.length });
+          pumpQueue(); // تشغيل الطلب التالي
+        });
+      }, 1000);
+    }
+  }
+});
+
+// في حال تم إغلاق التبويب يدوياً
+chrome.tabs.onRemoved.addListener((closedTabId) => {
+  if (runningTasks.has(closedTabId)) {
+    runningTasks.delete(closedTabId);
+    activeCount = Math.max(0, activeCount - 1);
+    notifySearchTab("SLOTS_UPDATED", { activeCount, remaining: pendingQueue.length });
+    pumpQueue();
+  }
+});
