@@ -1,125 +1,145 @@
 // ===================================================
-// DU Crawler - Strict Single-Tab Lock Engine
+// DU Crawler - Multi-Tab Worker Pool & Watchdog
 // ===================================================
 
-let activeTabId = null;
-let watchdogTimer = null;
-let currentResolve = null;
+let maxConcurrent = 2; // القيمة الافتراضية
+const activeSlots = new Map(); // tabId -> { orderId, watchdogTimer, resolve }
+const internalQueue = [];
+let isProcessingQueue = false;
 
-// دالة تضمن إغلاق التبويب الحالي وتحرير القفل حتماً
-function cleanupCurrentTab() {
-  if (watchdogTimer) {
-    clearTimeout(watchdogTimer);
-    watchdogTimer = null;
+function pumpQueue() {
+  if (!isProcessingQueue) return;
+
+  while (activeSlots.size < maxConcurrent && internalQueue.length > 0) {
+    const job = internalQueue.shift();
+    openOrderTab(job);
   }
+}
 
-  const tabToClose = activeTabId;
-  activeTabId = null;
+function openOrderTab(job) {
+  const { orderId, url, resolve } = job;
 
-  if (tabToClose) {
-    chrome.tabs.remove(tabToClose, () => {
-      // تفادي أخطاء محاولة إغلاق تبويب مغلق مسبقاً
-      if (chrome.runtime.lastError) { /* ignore */ }
+  chrome.tabs.create({ url: url, active: false }, (newTab) => {
+    if (chrome.runtime.lastError || !newTab) {
+      resolve({ status: "FAILED", orderId, reason: "تعذر فتح التبويب" });
+      pumpQueue();
+      return;
+    }
+
+    // مؤقت أمان قسري مستقل لكل تاب (25 ثانية)
+    const timer = setTimeout(() => {
+      cleanupTab(newTab.id, {
+        status: "TIMEOUT",
+        orderId: orderId,
+        reason: "انتهت مهلة استجابة الصفحة (25 ثانية)"
+      });
+    }, 25000);
+
+    activeSlots.set(newTab.id, {
+      orderId: orderId,
+      watchdogTimer: timer,
+      resolve: resolve
     });
+  });
+}
+
+function cleanupTab(tabId, resultPayload) {
+  const slot = activeSlots.get(tabId);
+  if (!slot) return;
+
+  clearTimeout(slot.watchdogTimer);
+  activeSlots.delete(tabId);
+
+  // إغلاق التبويب من المتصفح
+  chrome.tabs.remove(tabId, () => {
+    if (chrome.runtime.lastError) { /* ignore */ }
+  });
+
+  // إرجاع النتيجة
+  if (slot.resolve) {
+    slot.resolve(resultPayload);
   }
+
+  // سحب طلب جديد لشغل الخانة الشاغرة فوراً
+  pumpQueue();
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
-  // 1. فتح تبويب واحد فقط وانتظار إغلاقه التام قبل الرد
-  if (message.action === "PROCESS_SINGLE_ORDER") {
-    // إذا كان هناك تبويب ما زال مفتوحاً، نمنع فتح أي تبويب جديد
-    if (activeTabId !== null) {
-      sendResponse({ status: "BUSY" });
-      return true;
-    }
+  // 1. استقبال طلبات معالجة بالتوازي
+  if (message.action === "PROCESS_ORDER_CONCURRENT") {
+    isProcessingQueue = true;
+    maxConcurrent = message.concurrency || 2;
 
-    const { orderId, url } = message;
-
-    chrome.tabs.create({ url: url, active: false }, (newTab) => {
-      if (chrome.runtime.lastError || !newTab) {
-        sendResponse({ status: "ERROR", reason: "تعذر إنشاء التبويب" });
-        return;
-      }
-
-      activeTabId = newTab.id;
-
-      // حفظ الـ Resolver للرد على لوحة البحث بمجرد انتهاء التبويب وإغلاقه
-      currentResolve = (result) => {
-        cleanupCurrentTab();
-        sendResponse(result);
-      };
-
-      // مؤقت أمان قسري: 25 ثانية كحد أقصى لإغلاق التبويب ومتابعة العمل مهما حصل
-      watchdogTimer = setTimeout(() => {
-        if (currentResolve) {
-          const resolve = currentResolve;
-          currentResolve = null;
-          resolve({ status: "TIMEOUT", reason: "انتهت مهلة استجابة الصفحة (25 ثانية)" });
-        }
-      }, 25000);
+    const jobPromise = new Promise((resolve) => {
+      internalQueue.push({
+        orderId: message.orderId,
+        url: message.url,
+        resolve: resolve
+      });
+      pumpQueue();
     });
 
-    return true; // إبقاء القناة مفتوحة حتى انتهاء العملية وإغلاق التبويب
+    jobPromise.then((res) => {
+      sendResponse(res);
+    });
+
+    return true; // إبقاء القناة مفتوحة حتى انتهاء المعالجة
   }
 
   // 2. وصول البيانات بنجاح من صفحة التفاصيل
   if (message.action === "DATA_EXTRACTED_SUCCESS") {
-    if (sender.tab && sender.tab.id === activeTabId) {
-      if (currentResolve) {
-        const resolve = currentResolve;
-        currentResolve = null;
-        resolve({
-          status: "SUCCESS",
-          orderId: message.orderId,
-          deedNumbers: message.deedNumbers || []
-        });
-      }
+    if (sender.tab && activeSlots.has(sender.tab.id)) {
+      cleanupTab(sender.tab.id, {
+        status: "SUCCESS",
+        orderId: message.orderId,
+        deedNumbers: message.deedNumbers || []
+      });
     }
   }
 
-  // 3. وصول إشعار فشل الاستخراج من صفحة التفاصيل
+  // 3. فشل الاستخراج من صفحة التفاصيل
   if (message.action === "EXTRACTION_FAILED") {
-    if (sender.tab && sender.tab.id === activeTabId) {
-      if (currentResolve) {
-        const resolve = currentResolve;
-        currentResolve = null;
-        resolve({
-          status: "FAILED",
-          orderId: message.orderId,
-          reason: message.reason || "فشل الاستخراج داخل الصفحة"
-        });
-      }
+    if (sender.tab && activeSlots.has(sender.tab.id)) {
+      cleanupTab(sender.tab.id, {
+        status: "FAILED",
+        orderId: message.orderId,
+        reason: message.reason || "فشل الاستخراج"
+      });
     }
   }
 
-  // 4. إيقاف الطوارئ من المستخدم
+  // 4. إيقاف الطوارئ ومسح الطابور
   if (message.action === "FORCE_STOP") {
-    cleanupCurrentTab();
-    if (currentResolve) {
-      const resolve = currentResolve;
-      currentResolve = null;
-      resolve({ status: "STOPPED" });
+    isProcessingQueue = false;
+    internalQueue.length = 0;
+
+    // إغلاق جميع التابات النشطة حالياً
+    for (const [tabId, slot] of activeSlots.entries()) {
+      clearTimeout(slot.watchdogTimer);
+      chrome.tabs.remove(tabId, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+      if (slot.resolve) slot.resolve({ status: "STOPPED", orderId: slot.orderId });
     }
-    sendResponse({ status: "STOPPED" });
+    activeSlots.clear();
+    sendResponse({ status: "ALL_STOPPED" });
     return true;
   }
 });
 
 // مراقبة إغلاق التبويب يدوياً من قِبل المستخدم
 chrome.tabs.onRemoved.addListener((closedTabId) => {
-  if (closedTabId === activeTabId) {
-    if (currentResolve) {
-      const resolve = currentResolve;
-      currentResolve = null;
-      cleanupCurrentTab();
-      resolve({ status: "MANUAL_CLOSE", reason: "تم إغلاق التبويب يدوياً" });
-    } else {
-      cleanupCurrentTab();
+  if (activeSlots.has(closedTabId)) {
+    const slot = activeSlots.get(closedTabId);
+    clearTimeout(slot.watchdogTimer);
+    activeSlots.delete(closedTabId);
+    if (slot.resolve) {
+      slot.resolve({ status: "MANUAL_CLOSE", orderId: slot.orderId, reason: "أُغلق التبويب يدوياً" });
     }
+    pumpQueue();
   }
 });
-
 
 
 
@@ -137,11 +157,13 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
   const ACTIVE_PAGE_SELECTOR = "li.rc-pagination-item-active";
   const NEXT_PAGE_SELECTOR = "li.rc-pagination-next";
 
-  // orderId -> { index, page, values, status }
+  // orderId -> { index, page, values, status: "pending" | "done" | "failed" }
   const tasksMap = new Map();
 
   let running = false;
   let globalCounter = 0;
+  let selectedConcurrency = 2;
+  let activeWorkersCount = 0;
 
   // ===== بناء الواجهة التفاعلية (HUD) =====
   const panel = document.createElement('div');
@@ -150,8 +172,8 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
     position: fixed;
     bottom: 20px;
     right: 20px;
-    width: 700px;
-    height: 590px;
+    width: 720px;
+    height: 600px;
     background: #0f172a;
     color: #38bdf8;
     z-index: 999999;
@@ -168,15 +190,16 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
   panel.innerHTML = `
     <!-- الرأس والأزرار -->
     <div style="padding: 10px 14px; display:flex; justify-content:space-between; align-items:center; background:#1e293b; border-bottom:1px solid #334155">
-      <b style="color:#f8fafc; font-size:14px">DU Crawler (نظام التبويب الواحد الصارم)</b>
+      <b style="color:#f8fafc; font-size:14px">DU Crawler Panel (متعدد التابات + إعادة الفاشل)</b>
       <div style="display:flex; gap:6px">
-        <button id="du-btn-toggle" style="background:#16a34a;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-weight:600">بدء</button>
-        <button id="du-btn-clean" style="background:#334155;color:#e2e8f0;border:none;padding:5px 12px;border-radius:4px;cursor:pointer">تفريغ</button>
-        <button id="du-btn-csv" style="background:#0284c7;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-weight:600">تصدير CSV</button>
+        <button id="du-btn-toggle" style="background:#16a34a;color:#fff;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-weight:600">بدء</button>
+        <button id="du-btn-retry" style="background:#d97706;color:#fff;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-weight:600">إعادة الفاشل (0)</button>
+        <button id="du-btn-clean" style="background:#334155;color:#e2e8f0;border:none;padding:5px 10px;border-radius:4px;cursor:pointer">تفريغ</button>
+        <button id="du-btn-csv" style="background:#0284c7;color:#fff;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-weight:600">تصدير CSV</button>
       </div>
     </div>
 
-    <!-- شريط النطاق -->
+    <!-- شريط النطاق واختيار عدد التابات -->
     <div style="padding: 6px 14px; background:#1e293b; border-bottom:1px solid #334155; font-size:12px; display:flex; align-items:center; justify-content:space-between; color:#94a3b8">
       <div style="display:flex; align-items:center; gap:8px">
         <span>نطاق الصفحات:</span>
@@ -187,7 +210,16 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
           <input type="number" id="du-page-end" min="1" placeholder="الكل" style="width:55px; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:2px; border-radius:3px; text-align:center" />
         </label>
       </div>
-      <span style="color:#38bdf8; font-weight:500">آلية العمل: تبويب واحد فقط بالخلفية 🔒</span>
+
+      <div style="display:flex; align-items:center; gap:6px">
+        <span>عدد التابات بالتوازي:</span>
+        <select id="du-concurrency-select" style="background:#0f172a; border:1px solid #475569; color:#38bdf8; padding:2px 8px; border-radius:3px; font-weight:bold; cursor:pointer">
+          <option value="1">1 تاب (مستقر جداً)</option>
+          <option value="2" selected>2 تابات (متوازن وسريع)</option>
+          <option value="3">3 تابات</option>
+          <option value="4">4 تابات</option>
+        </select>
+      </div>
     </div>
 
     <!-- الإحصائيات المباشرة -->
@@ -195,7 +227,7 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
       <span>المرحلة: <b id="du-phase-text" style="color:#f59e0b">جاهز</b></span>
       <span>الصفحة: <b id="du-page-num" style="color:#f8fafc">-</b></span>
       <span>المكتمل: <b id="du-done-count" style="color:#4ade80">0</b> / <b id="du-total-count" style="color:#38bdf8">0</b></span>
-      <span>التبويب النشط: <b id="du-active-status" style="color:#94a3b8">لا يوجد</b></span>
+      <span>التابات النشطة: <b id="du-active-slots" style="color:#38bdf8">0/2</b></span>
     </div>
 
     <!-- جدول عرض النتائج -->
@@ -217,17 +249,24 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
   document.body.appendChild(panel);
 
   const btnToggle = panel.querySelector("#du-btn-toggle");
+  const btnRetry = panel.querySelector("#du-btn-retry");
   const btnClean = panel.querySelector("#du-btn-clean");
   const btnCsv = panel.querySelector("#du-btn-csv");
   const inputStartPage = panel.querySelector("#du-page-start");
   const inputEndPage = panel.querySelector("#du-page-end");
+  const selectConcurrency = panel.querySelector("#du-concurrency-select");
   const tableBody = panel.querySelector("#du-table-body");
 
   const lblPhase = panel.querySelector("#du-phase-text");
   const lblPage = panel.querySelector("#du-page-num");
   const lblDoneCount = panel.querySelector("#du-done-count");
   const lblTotalCount = panel.querySelector("#du-total-count");
-  const lblActiveStatus = panel.querySelector("#du-active-status");
+  const lblActiveSlots = panel.querySelector("#du-active-slots");
+
+  selectConcurrency.onchange = () => {
+    selectedConcurrency = parseInt(selectConcurrency.value, 10) || 2;
+    lblActiveSlots.textContent = `${activeWorkersCount}/${selectedConcurrency}`;
+  };
 
   btnToggle.onclick = () => {
     running = !running;
@@ -242,30 +281,56 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
     }
   };
 
+  // زر إعادة تشغيل الطلبات الفاشلة فقط دون مسح الصفحات من جديد
+  btnRetry.onclick = () => {
+    if (running) return;
+
+    const failedKeys = [...tasksMap.entries()].filter(([_, d]) => d.status === "failed");
+    if (failedKeys.length === 0) {
+      alert("لا توجد طلبات فاشلة لإعادة محاولتها.");
+      return;
+    }
+
+    failedKeys.forEach(([_, d]) => {
+      d.status = "pending";
+      d.values = ["إعادة المحاولة..."];
+    });
+
+    renderUI();
+    running = true;
+    btnToggle.textContent = "إيقاف مؤقت";
+    btnToggle.style.background = "#dc2626";
+
+    lblPhase.textContent = `إعادة محاولة ${failedKeys.length} طلب فاشل...`;
+    processPendingOrdersBatch();
+  };
+
   btnClean.onclick = () => {
     tasksMap.clear();
     globalCounter = 0;
+    activeWorkersCount = 0;
     renderUI();
   };
 
   btnCsv.onclick = exportCSV;
 
-  // ===== إرسال الطلب وانتظار إغلاق التبويب حتماً =====
-  function processOrderSynchronously(orderId, url) {
+  // إرسال طلب فردي إلى Background الذي ينظمه داخل الـ Pool
+  function requestOrderExtraction(orderId, url) {
     return new Promise((resolve) => {
       if (!isExtensionValid() || !running) {
-        return resolve({ status: "STOPPED" });
+        return resolve({ status: "STOPPED", orderId });
       }
 
       chrome.runtime.sendMessage({
-        action: "PROCESS_SINGLE_ORDER",
+        action: "PROCESS_ORDER_CONCURRENT",
         orderId: orderId,
-        url: url
-      }, (response) => {
+        url: url,
+        concurrency: selectedConcurrency
+      }, (res) => {
         if (chrome.runtime.lastError) {
-          resolve({ status: "ERROR", reason: chrome.runtime.lastError.message });
+          resolve({ status: "FAILED", orderId, reason: chrome.runtime.lastError.message });
         } else {
-          resolve(response || { status: "EMPTY" });
+          resolve(res || { status: "FAILED", orderId, reason: "لا توجد استجابة" });
         }
       });
     });
@@ -371,19 +436,86 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
     return list;
   }
 
-  // ===== إدارة التدفق الرئيسي (مسح ثم معالجة تسلسلية 1 بـ 1) =====
+  // ===== إدارة المرحلة 2 (معالجة الطابور بالتوازي) =====
+
+  async function processPendingOrdersBatch() {
+    const pendingList = [...tasksMap.entries()].filter(([_, d]) => d.status === "pending");
+
+    if (pendingList.length === 0) {
+      lblPhase.textContent = "لا توجد طلبات قيد الانتظار.";
+      running = false;
+      btnToggle.textContent = "بدء";
+      btnToggle.style.background = "#16a34a";
+      return;
+    }
+
+    let pointer = 0;
+
+    // دالة العامل المساعد (Worker)
+    async function worker() {
+      while (pointer < pendingList.length && running) {
+        const currentIndex = pointer++;
+        const [orderId, data] = pendingList[currentIndex];
+
+        activeWorkersCount++;
+        lblActiveSlots.textContent = `${activeWorkersCount}/${selectedConcurrency}`;
+
+        const targetUrl = `https://ops.rer.sa/deed-upgrade-case-view?caseId=${orderId}`;
+        const result = await requestOrderExtraction(orderId, targetUrl);
+
+        activeWorkersCount = Math.max(0, activeWorkersCount - 1);
+        lblActiveSlots.textContent = `${activeWorkersCount}/${selectedConcurrency}`;
+
+        if (result.status === "SUCCESS") {
+          data.values = result.deedNumbers || [];
+          data.status = "done";
+        } else {
+          data.values = [`⚠️ ${result.reason || "فشل"}`];
+          data.status = "failed";
+        }
+
+        renderUI();
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }
+
+    // إطلاق عدد العمال وفق الـ Concurrency المحددة
+    const workers = [];
+    const poolSize = Math.min(selectedConcurrency, pendingList.length);
+    for (let i = 0; i < poolSize; i++) {
+      workers.push(worker());
+    }
+
+    await Promise.all(workers);
+
+    if (running) {
+      const remainingFailed = [...tasksMap.values()].filter(d => d.status === "failed").length;
+      if (remainingFailed > 0) {
+        lblPhase.textContent = `اكتملت المعالجة (يوجد ${remainingFailed} طلب فاشل، يمكنك الضغط على إعادة الفاشل).`;
+        lblPhase.style.color = "#d97706";
+      } else {
+        lblPhase.textContent = "اكتملت جميع العمليات بنجاح 100%!";
+        lblPhase.style.color = "#22c55e";
+      }
+
+      btnToggle.textContent = "بدء";
+      btnToggle.style.background = "#16a34a";
+      running = false;
+    }
+  }
+
+  // ===== التدفق الرئيسي =====
 
   async function startMasterProcess() {
+    selectedConcurrency = parseInt(selectConcurrency.value, 10) || 2;
     const startVal = parseInt(inputStartPage.value, 10);
     const endVal = parseInt(inputEndPage.value, 10);
 
     let activeNum = getActivePageNumber() || 1;
     let targetPage = (!isNaN(startVal) && startVal >= 1) ? startVal : activeNum;
 
-    // ----------------------------------------------------
-    // المرحلة 1: المسح السريع وجمع كل الطلبات من الصفحات
-    // ----------------------------------------------------
-    lblPhase.textContent = "المرحلة 1: مسح الصفحات وتجميع الطلبات";
+    // المرحلة 1: المسح
+    lblPhase.textContent = "المرحلة 1: تجميع أرقام الطلبات من الصفحات";
     lblPhase.style.color = "#f59e0b";
 
     if (activeNum !== targetPage) {
@@ -415,55 +547,20 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
 
     if (!running) return;
 
-    // ----------------------------------------------------
-    // المرحلة 2: فتح كل طلب واستخراج الصكوك تسلسلياً (1 تلو الآخر)
-    // ----------------------------------------------------
-    lblPhase.textContent = "المرحلة 2: استخراج الصكوك (تبويب واحد مغلق)";
+    // المرحلة 2: استخراج الصكوك بالتوازي
+    lblPhase.textContent = `المرحلة 2: استخراج الصكوك (${selectedConcurrency} تابات بالتوازي)`;
     lblPhase.style.color = "#4ade80";
 
-    const ordersToProcess = [...tasksMap.entries()].filter(([_, data]) => data.status === "pending");
-
-    for (const [orderId, data] of ordersToProcess) {
-      if (!running) break;
-
-      lblActiveStatus.textContent = `مفتوح الآن: ${orderId}`;
-      lblActiveStatus.style.color = "#fbbf24";
-
-      const targetUrl = `https://ops.rer.sa/deed-upgrade-case-view?caseId=${orderId}`;
-
-      // انتظار حتمي حتى يعود الـ background بعد إغلاق التبويب تماماً
-      const result = await processOrderSynchronously(orderId, targetUrl);
-
-      if (result.status === "SUCCESS") {
-        data.values = result.deedNumbers || [];
-        data.status = "done";
-      } else {
-        data.values = [`⚠️ ${result.reason || "فشل"}`];
-        data.status = "failed";
-      }
-
-      renderUI();
-      lblActiveStatus.textContent = "مُغلق (جاهز للتالي)";
-      lblActiveStatus.style.color = "#4ade80";
-
-      // مهلة استقرار قصيرة (500ms) بين إغلاق التبويب وفتح الذي يليه
-      await new Promise(r => setTimeout(r, 500));
-    }
-
-    if (running) {
-      lblPhase.textContent = "اكتملت جميع العمليات بنجاح 100%!";
-      lblPhase.style.color = "#22c55e";
-      lblActiveStatus.textContent = "انتهى";
-      btnToggle.textContent = "بدء";
-      btnToggle.style.background = "#16a34a";
-      running = false;
-    }
+    await processPendingOrdersBatch();
   }
 
   function renderUI() {
-    const done = [...tasksMap.values()].filter(t => t.status === "done" || t.status === "failed").length;
+    const done = [...tasksMap.values()].filter(t => t.status === "done").length;
+    const failed = [...tasksMap.values()].filter(t => t.status === "failed").length;
+
     lblDoneCount.textContent = done;
     lblTotalCount.textContent = tasksMap.size;
+    btnRetry.textContent = `إعادة الفاشل (${failed})`;
 
     tableBody.innerHTML = [...tasksMap.entries()]
       .map(([orderId, data]) => `
@@ -472,7 +569,7 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
           <td style="padding:5px; border-bottom:1px solid #1e293b; text-align:center; color:#e2e8f0"><span style="background:#334155; padding:1px 6px; border-radius:3px">${data.page}</span></td>
           <td style="padding:5px; border-bottom:1px solid #1e293b; font-family:monospace; color:#38bdf8">${orderId}</td>
           <td style="padding:5px; border-bottom:1px solid #1e293b; color:#f1f5f9">
-            ${data.values.map(v => `<span style="display:inline-block; background:${data.status === 'done' ? '#1e293b' : '#334155'}; padding:2px 8px; margin:2px; border-radius:4px; font-size:11px; border:1px solid ${data.status === 'done' ? '#334155' : '#475569'}">${v}</span>`).join('')}
+            ${data.values.map(v => `<span style="display:inline-block; background:${data.status === 'done' ? '#1e293b' : (data.status === 'failed' ? '#7f1d1d' : '#334155')}; padding:2px 8px; margin:2px; border-radius:4px; font-size:11px; border:1px solid ${data.status === 'done' ? '#334155' : (data.status === 'failed' ? '#ef4444' : '#475569')}">${v}</span>`).join('')}
           </td>
         </tr>
       `).join('');
@@ -507,105 +604,3 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
 
 
 
-(function () {
-  'use strict';
-
-  const LIST_SELECTOR = "#upgrade-deed-real-estate-number";
-
-  function getOrderIdFromUrl() {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("caseId") || params.get("requestId") || (document.body.innerText.match(/\bDU\d+\b/)?.[0] || null);
-  }
-
-  function waitForElement(selector, timeout = 15000) {
-    return new Promise((resolve, reject) => {
-      const el = document.querySelector(selector);
-      if (el) return resolve(el);
-
-      const observer = new MutationObserver(() => {
-        const target = document.querySelector(selector);
-        if (target) {
-          observer.disconnect();
-          resolve(target);
-        }
-      });
-
-      observer.observe(document.body, { childList: true, subtree: true });
-
-      setTimeout(() => {
-        observer.disconnect();
-        reject(new Error(`تعذر العثور على القائمة: ${selector}`));
-      }, timeout);
-    });
-  }
-
-  async function executeExtraction() {
-    const orderId = getOrderIdFromUrl();
-
-    try {
-      const listElement = await waitForElement(LIST_SELECTOR, 15000);
-      listElement.classList.add("du-highlight-green");
-
-      await new Promise(r => setTimeout(r, 300));
-
-      const extractedValues = [];
-
-      if (listElement.tagName.toLowerCase() === "select") {
-        const options = [...listElement.options].filter(o => o.value && o.value.trim() !== "");
-        options.forEach(opt => {
-          const txt = opt.text.trim();
-          if (txt && !extractedValues.includes(txt)) extractedValues.push(txt);
-        });
-      } else {
-        const subItems = listElement.querySelectorAll("li, tr, div[role='option'], .option, span, p");
-        if (subItems.length > 0) {
-          subItems.forEach(item => {
-            const val = item.innerText.trim();
-            if (val && !extractedValues.includes(val)) {
-              extractedValues.push(val);
-              item.classList.add("du-highlight-green");
-              const badge = document.createElement("span");
-              badge.className = "du-badge-check";
-              badge.textContent = "✓";
-              item.prepend(badge);
-            }
-          });
-        } else {
-          const directVal = listElement.value || listElement.innerText.trim();
-          if (directVal) {
-            extractedValues.push(directVal);
-            const badge = document.createElement("span");
-            badge.className = "du-badge-check";
-            badge.textContent = "✓";
-            listElement.parentNode.insertBefore(badge, listElement.nextSibling);
-          }
-        }
-      }
-
-      if (extractedValues.length === 0) {
-        throw new Error("القائمة لا تحتوي على صكوك");
-      }
-
-      // إرسال النجاح
-      chrome.runtime.sendMessage({
-        action: "DATA_EXTRACTED_SUCCESS",
-        orderId: orderId,
-        deedNumbers: extractedValues
-      });
-
-    } catch (err) {
-      // إرسال الفشل ليغلق background التبويب فوراً
-      chrome.runtime.sendMessage({
-        action: "EXTRACTION_FAILED",
-        orderId: orderId,
-        reason: err.message
-      });
-    }
-  }
-
-  if (document.readyState === "complete") {
-    setTimeout(executeExtraction, 800);
-  } else {
-    window.addEventListener("load", () => setTimeout(executeExtraction, 800));
-  }
-})();
