@@ -1,5 +1,594 @@
-Uncaught Error: Extension context invalidated.
-Context
-https://ops.rer.sa/deed-upgrade-dashboard?filteredGraph=Geospatial+Specialist
-Stack Trace
-extensions://blielfeojhaejfhagkeffijijlkblfmk/content_search.js ((anonymous function)):379:1
+سبب الخطأ Uncaught Error: Extension context invalidated هو إعادة تحميل الإضافة (Reload) أو تحديثها في صفحة chrome://extensions بينما كانت صفحة لوحة الطلبات ما زالت مفتوحة. عندما يُعاد تحميل الإضافة، ينقطع الاتصال البرمجي بالكامل بين السكربتات القديمة المحقونة ومحرك الإضافة في الخلفية.
+> حل الخطأ: بعد تحديث الأكواد، احرص على عمل Refresh (F5) لصفحة [https://ops.rer.sa/deed-upgrade-dashboard](https://ops.rer.sa/deed-upgrade-dashboard) لتحديث السكربت. كما تم تحصين الكود بدوال فحص chrome.runtime?.id لمنع هذا الانهيار مستقبلاً.
+> 
+التعديلات المنفذة في هذا التحديث:
+ * فتح التبويبات في الخلفية: تم ضبط active: false لكي لا تنقلك التبويبات بعيداً عن لوحة الطلبات أثناء عملك.
+ * المعالجة المتوازية (Concurrency = 3): أصبح الـ background.js يدير طابور معالجة يفتح حتى 3 تبويبات في نفس الوقت، ومع انتهاء وإغلاق أي تبويب يتم سحب الطلب التالي فوراً لزيادة السرعة إلى 3 أضعاف دون أي تعارض في حفظ النتائج.
+ * حماية سياق الإضافة: تغليف الاتصالات بـ try/catch والتحقق من صلاحية السياق قبل إرسال أي رسالة لمنع ظهور أخطاء context invalidated.
+1. background.js (إدارة 3 تبويبات متوازية في الخلفية)
+استبدل محتوى background.js بالكامل:
+// إدارة حالة التبويبات المتعددة
+const MAX_CONCURRENT = 3;
+let activeTasks = new Map(); // tabId -> { orderId, searchTabId, url }
+let isInitialized = false;
+
+// استقبال الطلبات من صفحات المحتوى
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // 1. طلب فتح تبويب جديد للطلب
+  if (message.action === "OPEN_ORDER_TAB") {
+    if (activeTasks.size >= MAX_CONCURRENT) {
+      sendResponse({ status: "BUSY", activeCount: activeTasks.size });
+      return true;
+    }
+
+    const orderId = message.orderId;
+    const searchTabId = sender.tab ? sender.tab.id : null;
+
+    // إنشاء التبويب في الخلفية بدون تنشيطه (active: false)
+    chrome.tabs.create({ url: message.url, active: false }, (newTab) => {
+      if (chrome.runtime.lastError || !newTab) {
+        sendResponse({ status: "ERROR", error: chrome.runtime.lastError?.message });
+        return;
+      }
+
+      activeTasks.set(newTab.id, {
+        orderId: orderId,
+        searchTabId: searchTabId,
+        url: message.url
+      });
+
+      sendResponse({ status: "STARTED", tabId: newTab.id, activeCount: activeTasks.size });
+    });
+    return true; // إبقاء القناة مفتوحة للاستجابة غير المتزامنة
+  }
+
+  // 2. وصول البيانات المستخرجة بنجاح من تبويب التفاصيل
+  if (message.action === "DATA_EXTRACTED_SUCCESS") {
+    const senderTabId = sender.tab ? sender.tab.id : null;
+    const task = activeTasks.get(senderTabId);
+
+    if (task && task.searchTabId) {
+      // إرسال البيانات للوحة البحث للحفظ
+      chrome.tabs.sendMessage(task.searchTabId, {
+        action: "SAVE_AND_VERIFY",
+        orderId: message.orderId || task.orderId,
+        deedNumbers: message.deedNumbers,
+        tabId: senderTabId
+      }, () => {
+        // تفادي أخطاء انقطاع الاتصال
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+  }
+
+  // 3. تأكيد الحفظ بنجاح -> إغلاق تبويب الطلب المعني وتحرير مكان في الطابور
+  if (message.action === "CONFIRM_CLOSE_DETAIL_TAB") {
+    const targetTabId = message.tabId;
+    if (targetTabId && activeTasks.has(targetTabId)) {
+      setTimeout(() => {
+        chrome.tabs.remove(targetTabId, () => {
+          activeTasks.delete(targetTabId);
+          if (chrome.runtime.lastError) { /* ignore */ }
+        });
+      }, 800);
+    }
+  }
+
+  // 4. الإبلاغ عن فشل الاستخراج: لا يُغلق التبويب للفحص اليدوي
+  if (message.action === "EXTRACTION_FAILED") {
+    const senderTabId = sender.tab ? sender.tab.id : null;
+    const task = activeTasks.get(senderTabId);
+
+    if (task && task.searchTabId) {
+      chrome.tabs.sendMessage(task.searchTabId, {
+        action: "RECORD_ERROR",
+        orderId: message.orderId || task.orderId,
+        reason: message.reason,
+        tabId: senderTabId
+      }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+    // تحرير الخانة من العداد للسماح بمتابعة بقية الطلبات
+    if (senderTabId) activeTasks.delete(senderTabId);
+  }
+});
+
+// مراقبة إغلاق التبويبات يدوياً لتحديث حالة الطابور
+chrome.tabs.onRemoved.addListener((closedTabId) => {
+  if (activeTasks.has(closedTabId)) {
+    const task = activeTasks.get(closedTabId);
+    if (task && task.searchTabId) {
+      chrome.tabs.sendMessage(task.searchTabId, {
+        action: "DETAIL_TAB_CLOSED_MANUALLY",
+        orderId: task.orderId
+      }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
+    }
+    activeTasks.delete(closedTabId);
+  }
+});
+
+2. content_search.js (دعم ضخ 3 طلبات متزامنة في الخلفية والوقاية من خطأ Context)
+استبدل محتوى content_search.js بالكامل:
+(function () {
+  'use strict';
+
+  // التحقق من صلاحية سياق الإضافة
+  function isExtensionValid() {
+    return typeof chrome !== "undefined" && chrome.runtime && !!chrome.runtime.id;
+  }
+
+  const TABLE_SELECTOR = "#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div:nth-child(2) > div > div.mt-9.my-5 > div > div.overflow-x-auto.w-full > table > tbody";
+  const PAGINATION_CONTAINER = "ul.rc-pagination";
+  const ACTIVE_PAGE_SELECTOR = "li.rc-pagination-item-active a, li.rc-pagination-item-active";
+  const NEXT_PAGE_SELECTOR = "li.rc-pagination-next";
+
+  const MAX_CONCURRENT = 3;
+  let activeWorkers = 0;
+
+  const results = new Map(); // orderId -> { index, page, values }
+  const failedOrders = new Set();
+  const processingOrders = new Set();
+
+  let running = false;
+  let queue = [];
+  let currentTargetPage = 1;
+  let globalCounter = 0;
+
+  // ===== بناء الواجهة التفاعلية (HUD) =====
+  const panel = document.createElement('div');
+  panel.id = "du-crawler-hud";
+  panel.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 680px;
+    height: 590px;
+    background: #0f172a;
+    color: #38bdf8;
+    z-index: 999999;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    border: 1px solid #334155;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    direction: rtl;
+  `;
+
+  panel.innerHTML = `
+    <div style="padding: 10px 14px; display:flex; justify-content:space-between; align-items:center; background:#1e293b; border-bottom:1px solid #334155">
+      <b style="color:#f8fafc; font-size:14px">DU Crawler Panel (3x تسريع في الخلفية)</b>
+      <div style="display:flex; gap:6px">
+        <button id="du-btn-toggle" style="background:#16a34a;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-weight:600">بدء</button>
+        <button id="du-btn-clean" style="background:#334155;color:#e2e8f0;border:none;padding:5px 12px;border-radius:4px;cursor:pointer">تفريغ</button>
+        <button id="du-btn-csv" style="background:#0284c7;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-weight:600">تصدير CSV</button>
+      </div>
+    </div>
+
+    <div style="padding: 6px 14px; background:#1e293b; border-bottom:1px solid #334155; font-size:12px; display:flex; align-items:center; gap:10px; color:#94a3b8">
+      <span>نطاق الصفحات:</span>
+      <label style="display:flex; align-items:center; gap:4px">
+        من:
+        <input type="number" id="du-page-start" min="1" placeholder="الحالية" style="width:60px; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:2px 6px; border-radius:3px; text-align:center" />
+      </label>
+      <label style="display:flex; align-items:center; gap:4px">
+        إلى:
+        <input type="number" id="du-page-end" min="1" placeholder="الكل" style="width:60px; background:#0f172a; border:1px solid #475569; color:#f8fafc; padding:2px 6px; border-radius:3px; text-align:center" />
+      </label>
+      <span style="font-size:11px; color:#38bdf8">(معالجة 3 تبويبات متزامنة في الخلفية)</span>
+    </div>
+
+    <div style="padding: 6px 14px; background:#0f172a; border-bottom:1px solid #334155; font-size:12px; display:flex; justify-content:space-between; color:#94a3b8">
+      <span>الصفحة: <b id="du-page-num" style="color:#f8fafc">-</b> (<span id="du-page-stat" style="color:#38bdf8">0/0</span>)</span>
+      <span>المكتمل: <b id="du-success-count" style="color:#4ade80">0</b></span>
+      <span>النشط حالياً: <b id="du-active-slots" style="color:#f59e0b">0/3</b></span>
+      <span>الحالة: <b id="du-status-text" style="color:#fbbf24">جاهز للبدء</b></span>
+    </div>
+
+    <div style="flex:1; overflow-y:auto; padding:6px;">
+      <table style="width:100%; border-collapse:collapse; font-size:12px; text-align:right">
+        <thead>
+          <tr style="background:#1e293b; color:#94a3b8">
+            <th style="padding:6px; border-bottom:1px solid #334155; width:8%; text-align:center">#</th>
+            <th style="padding:6px; border-bottom:1px solid #334155; width:12%; text-align:center">الصفحة</th>
+            <th style="padding:6px; border-bottom:1px solid #334155; width:28%">Case no (DU)</th>
+            <th style="padding:6px; border-bottom:1px solid #334155; width:52%">Pcp (القيم المستخرجة)</th>
+          </tr>
+        </thead>
+        <tbody id="du-table-body"></tbody>
+      </table>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+
+  const btnToggle = panel.querySelector("#du-btn-toggle");
+  const btnClean = panel.querySelector("#du-btn-clean");
+  const btnCsv = panel.querySelector("#du-btn-csv");
+  const inputStartPage = panel.querySelector("#du-page-start");
+  const inputEndPage = panel.querySelector("#du-page-end");
+  const tableBody = panel.querySelector("#du-table-body");
+  const lblCount = panel.querySelector("#du-success-count");
+  const lblStatus = panel.querySelector("#du-status-text");
+  const lblPage = panel.querySelector("#du-page-num");
+  const lblPageStat = panel.querySelector("#du-page-stat");
+  const lblActiveSlots = panel.querySelector("#du-active-slots");
+
+  function updateSlotsDisplay() {
+    lblActiveSlots.textContent = `${activeWorkers}/${MAX_CONCURRENT}`;
+  }
+
+  btnToggle.onclick = () => {
+    running = !running;
+    btnToggle.textContent = running ? "إيقاف مؤقت" : "بدء";
+    btnToggle.style.background = running ? "#dc2626" : "#16a34a";
+
+    if (running) {
+      lblStatus.textContent = "جاري البدء...";
+      initiateFlow();
+    } else {
+      lblStatus.textContent = "متوقف مؤقتاً";
+    }
+  };
+
+  btnClean.onclick = () => {
+    results.clear();
+    failedOrders.clear();
+    processingOrders.clear();
+    globalCounter = 0;
+    activeWorkers = 0;
+    updateSlotsDisplay();
+    renderUI();
+  };
+
+  btnCsv.onclick = exportCSV;
+
+  // ===== استقبال رسائل الحفظ والنتائج =====
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (!isExtensionValid()) return;
+
+    if (msg.action === "SAVE_AND_VERIFY") {
+      activeWorkers = Math.max(0, activeWorkers - 1);
+      updateSlotsDisplay();
+      processingOrders.delete(msg.orderId);
+
+      if (msg.orderId && msg.deedNumbers && msg.deedNumbers.length > 0) {
+        if (!results.has(msg.orderId)) {
+          globalCounter++;
+          const curPage = getActivePageNumber() || currentTargetPage;
+          results.set(msg.orderId, {
+            index: globalCounter,
+            page: curPage,
+            values: msg.deedNumbers
+          });
+          renderUI();
+        }
+
+        // إرسال تأكيد إغلاق التبويب إلى background
+        safeSendMessage({ 
+          action: "CONFIRM_CLOSE_DETAIL_TAB", 
+          tabId: msg.tabId 
+        });
+
+        // مواصلة ضخ طلب جديد لشغل الخانة الشاغرة
+        setTimeout(fillWorkerSlots, 400);
+      }
+    }
+
+    if (msg.action === "RECORD_ERROR") {
+      activeWorkers = Math.max(0, activeWorkers - 1);
+      updateSlotsDisplay();
+      processingOrders.delete(msg.orderId);
+      failedOrders.add(msg.orderId);
+
+      globalCounter++;
+      const curPage = getActivePageNumber() || currentTargetPage;
+      results.set(msg.orderId, {
+        index: globalCounter,
+        page: curPage,
+        values: [`⚠️ خطأ: ${msg.reason}`]
+      });
+      renderUI();
+      lblStatus.textContent = `فشل في ${msg.orderId}`;
+      setTimeout(fillWorkerSlots, 400);
+    }
+
+    if (msg.action === "DETAIL_TAB_CLOSED_MANUALLY") {
+      activeWorkers = Math.max(0, activeWorkers - 1);
+      updateSlotsDisplay();
+      processingOrders.delete(msg.orderId);
+      setTimeout(fillWorkerSlots, 400);
+    }
+  });
+
+  function safeSendMessage(payload, callback) {
+    if (!isExtensionValid()) return;
+    try {
+      chrome.runtime.sendMessage(payload, (res) => {
+        if (chrome.runtime.lastError) {
+          // هدوء عند انقطاع الاتصال المؤقت
+        } else if (callback) {
+          callback(res);
+        }
+      });
+    } catch (e) {
+      console.warn("[DU Crawler] Message dispatch failed:", e);
+    }
+  }
+
+  // ===== الترقيم Pagination =====
+  function getActivePageNumber() {
+    const pag = document.querySelector(PAGINATION_CONTAINER);
+    if (!pag) return null;
+    const activeItem = pag.querySelector(ACTIVE_PAGE_SELECTOR);
+    if (!activeItem) return null;
+    const num = parseInt(activeItem.textContent.trim(), 10);
+    return isNaN(num) ? null : num;
+  }
+
+  function isNextDisabled() {
+    const pag = document.querySelector(PAGINATION_CONTAINER);
+    if (!pag) return true;
+    const nextLi = pag.querySelector(NEXT_PAGE_SELECTOR);
+    if (!nextLi) return true;
+    return (
+      nextLi.classList.contains("rc-pagination-disabled") ||
+      nextLi.getAttribute("aria-disabled") === "true" ||
+      nextLi.querySelector("button[disabled], a[disabled]") !== null
+    );
+  }
+
+  async function navigateToPage(pageNum) {
+    const pag = document.querySelector(PAGINATION_CONTAINER);
+    if (!pag) return false;
+
+    const pageItems = [...pag.querySelectorAll("li.rc-pagination-item")];
+    const targetLi = pageItems.find(li => {
+      const a = li.querySelector("a") || li;
+      return a.textContent.trim() === String(pageNum);
+    });
+
+    if (targetLi) {
+      const clickEl = targetLi.querySelector("a, button") || targetLi;
+      clickEl.click();
+      return true;
+    }
+
+    const nextLi = pag.querySelector(NEXT_PAGE_SELECTOR);
+    if (nextLi && !isNextDisabled()) {
+      const clickEl = nextLi.querySelector("a, button") || nextLi;
+      clickEl.click();
+      return true;
+    }
+
+    return false;
+  }
+
+  async function ensurePageLoaded(expectedPageNum, timeout = 10000) {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeout) {
+      if (!running) return false;
+      const activeNum = getActivePageNumber();
+      if (activeNum === expectedPageNum) {
+        const tbody = document.querySelector(TABLE_SELECTOR);
+        if (tbody && tbody.querySelectorAll("tr").length > 0) {
+          await new Promise(r => setTimeout(r, 1200));
+          return true;
+        }
+      }
+      await new Promise(r => setTimeout(r, 400));
+    }
+    return false;
+  }
+
+  async function scanPageOrdersWithCheck(maxWaitTime = 6000) {
+    const startTime = Date.now();
+    let found = [];
+
+    while (Date.now() - startTime < maxWaitTime) {
+      if (!running) return [];
+
+      const tbody = document.querySelector(TABLE_SELECTOR);
+      if (tbody) {
+        const rows = tbody.querySelectorAll("tr");
+        found = [];
+
+        rows.forEach(row => {
+          const match = row.innerText.match(/\bDU\d+\b/);
+          if (match) {
+            const orderId = match[0];
+            const linkEl = row.querySelector("a[href*='deed-upgrade-case-view']");
+            let targetUrl = linkEl ? linkEl.href : null;
+            if (!targetUrl) {
+              targetUrl = `https://ops.rer.sa/deed-upgrade-case-view?requestId=${orderId}`;
+            }
+            found.push({ orderId, url: targetUrl });
+          }
+        });
+
+        if (found.length >= 10 || (Date.now() - startTime > 3000 && found.length > 0)) {
+          break;
+        }
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    return found;
+  }
+
+  // ===== إدارة التدفق والتوازي (Concurrency = 3) =====
+  async function initiateFlow() {
+    const startVal = parseInt(inputStartPage.value, 10);
+    const active = getActivePageNumber();
+
+    currentTargetPage = (!isNaN(startVal) && startVal >= 1) ? startVal : (active || 1);
+
+    if (active && active !== currentTargetPage) {
+      lblStatus.textContent = `الانتقال إلى صفحة البداية: ${currentTargetPage}...`;
+      await navigateToPage(currentTargetPage);
+      await ensurePageLoaded(currentTargetPage);
+    }
+
+    processCurrentPage();
+  }
+
+  async function processCurrentPage() {
+    if (!running) return;
+
+    const currentPageNum = getActivePageNumber() || currentTargetPage;
+    lblPage.textContent = currentPageNum;
+
+    const endVal = parseInt(inputEndPage.value, 10);
+    if (!isNaN(endVal) && currentPageNum > endVal) {
+      lblStatus.textContent = `اكتمل النطاق عند صفحة: ${endVal}`;
+      stopCrawler();
+      return;
+    }
+
+    lblStatus.textContent = `فحص طلبات الصفحة ${currentPageNum}...`;
+    const pageOrders = await scanPageOrdersWithCheck();
+
+    // استبعاد الطلبات المعالجة أو التي قيد المعالجة الآن
+    queue = pageOrders.filter(item => 
+      !results.has(item.orderId) && 
+      !failedOrders.has(item.orderId) && 
+      !processingOrders.has(item.orderId)
+    );
+
+    const totalInPage = pageOrders.length;
+    const completedInPage = totalInPage - queue.length;
+    lblPageStat.textContent = `${completedInPage}/${totalInPage} طلب`;
+
+    // إذا لم يتبق شيء في الطابور ولا توجد أي طلبات نشطة في الخلفية
+    if (queue.length === 0 && activeWorkers === 0) {
+      lblStatus.textContent = `اكتملت الصفحة ${currentPageNum} (${totalInPage} طلبات).`;
+
+      if (!isNaN(endVal) && currentPageNum >= endVal) {
+        lblStatus.textContent = `تم الانتهاء بنجاح حتى صفحة ${endVal}.`;
+        stopCrawler();
+        return;
+      }
+
+      if (isNextDisabled()) {
+        lblStatus.textContent = "وصلنا إلى نهاية جميع الصفحات المتاحة.";
+        stopCrawler();
+        return;
+      }
+
+      currentTargetPage = currentPageNum + 1;
+      lblStatus.textContent = `الانتقال إلى صفحة ${currentTargetPage}...`;
+
+      let moved = false;
+      for (let retry = 1; retry <= 3; retry++) {
+        moved = await navigateToPage(currentTargetPage);
+        const loaded = await ensurePageLoaded(currentTargetPage, 7000);
+        if (loaded) {
+          moved = true;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+
+      if (!moved) {
+        lblStatus.textContent = `تعذر فتح صفحة ${currentTargetPage}.`;
+        stopCrawler();
+        return;
+      }
+
+      setTimeout(processCurrentPage, 1000);
+      return;
+    }
+
+    // ضخ الطلبات حتى امتلاء الـ 3 خانات
+    fillWorkerSlots();
+  }
+
+  function fillWorkerSlots() {
+    if (!running) return;
+
+    while (activeWorkers < MAX_CONCURRENT && queue.length > 0) {
+      const item = queue.shift();
+      if (!item) break;
+
+      activeWorkers++;
+      updateSlotsDisplay();
+      processingOrders.add(item.orderId);
+      lblStatus.textContent = `جاري معالجة: ${item.orderId}`;
+
+      safeSendMessage({
+        action: "OPEN_ORDER_TAB",
+        orderId: item.orderId,
+        url: item.url
+      }, (res) => {
+        if (!res || res.status === "BUSY" || res.status === "ERROR") {
+          activeWorkers = Math.max(0, activeWorkers - 1);
+          updateSlotsDisplay();
+          processingOrders.delete(item.orderId);
+          queue.unshift(item); // إعادة المحاولة
+        }
+      });
+    }
+
+    // إذا فرغ الطابور وكان هناك مهام تعمل، ننتظر انتهائها
+    if (queue.length === 0 && activeWorkers === 0) {
+      processCurrentPage();
+    }
+  }
+
+  function stopCrawler() {
+    running = false;
+    btnToggle.textContent = "بدء";
+    btnToggle.style.background = "#16a34a";
+  }
+
+  function renderUI() {
+    tableBody.innerHTML = [...results.entries()]
+      .map(([orderId, data]) => `
+        <tr>
+          <td style="padding:5px; border-bottom:1px solid #1e293b; text-align:center; color:#94a3b8; font-weight:bold">${data.index}</td>
+          <td style="padding:5px; border-bottom:1px solid #1e293b; text-align:center; color:#e2e8f0"><span style="background:#334155; padding:1px 6px; border-radius:3px">${data.page}</span></td>
+          <td style="padding:5px; border-bottom:1px solid #1e293b; font-family:monospace; color:#38bdf8">${orderId}</td>
+          <td style="padding:5px; border-bottom:1px solid #1e293b; color:#f1f5f9">
+            ${data.values.map(v => `<span style="display:inline-block; background:#1e293b; padding:2px 8px; margin:2px; border-radius:4px; font-size:11px; border:1px solid #334155">${v}</span>`).join('')}
+          </td>
+        </tr>
+      `).join('');
+
+    lblCount.textContent = results.size;
+  }
+
+  function exportCSV() {
+    if (results.size === 0) {
+      alert("لا توجد بيانات متاحة للتصدير حالياً.");
+      return;
+    }
+
+    const rows = [["#", "Page", "Case no", "Pcp"]];
+
+    results.forEach((data, caseNo) => {
+      const pcpCombined = data.values.join(" | ");
+      const escapedPcp = `"${pcpCombined.replace(/"/g, '""')}"`;
+      rows.push([data.index, data.page, caseNo, escapedPcp]);
+    });
+
+    const csvContent = "\uFEFF" + rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DU_Extract_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+})();
+
+خطوات تطبيق التحديث:
+ * استبدل محتوى ملفي background.js و content_search.js بالأكواد أعلاه.
+ * ادخل إلى صفحة chrome://extensions/ واضغط على أيقونة Reload بجانب الإضافة.
+ * مهم جداً: افتح صفحة لوحة الطلبات واضغط Refresh (F5) حتى يتخلص المتصفح تماماً من النسخة القديمة الملغاة وينتهي خطأ context invalidated.
+ * عند الضغط على بدء، ستلاحظ في خانة "النشط حالياً" 3/3، حيث تُفتح الطلبات في تبويبات خلفية دون تعطيل عملك وتُستخرج البيانات بأقصى سرعة.
