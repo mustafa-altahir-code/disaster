@@ -1,0 +1,674 @@
+# -*- coding: utf-8 -*-
+import os
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+from tkinter import Tk, Label, Entry, Button, filedialog, BooleanVar, Checkbutton, Canvas, messagebox
+from PIL import Image, ImageTk
+from webdriver_manager.chrome import ChromeDriverManager
+import time
+from datetime import datetime
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+import openpyxl 
+
+# Get current directory
+# current_directory = os.path.dirname(os.path.abspath(__file__))
+current_directory = os.getcwd()
+
+# Default values
+userNameFromOPS = ""
+Email = "LMohammed.c@rer.sa"
+passwordFromUser = "Rer@1234"
+fc = os.path.join(current_directory, "Report.xlsx")
+save_path = current_directory
+chromedriver_path = r"\\10.150.40.49\las\aboelmagd\chromedriver\chromedriver.exe"
+
+
+# Global variables
+ops = None
+df = None
+frN = []
+frAll = []
+report = []
+frfloop = []
+currentFr = ""
+dfu = None
+lastFR = ""
+
+#to change options for browser if u want 
+options = Options()
+# options.add_argument("--start-maximized")  # تكبير الشاشة
+# options.add_argument("--headless")  # وضع التشغيل بدون واجهة (اختياري)
+# options.add_argument("--disable-gpu")  # قد يكون مفيدًا لبعض الأنظمة
+# options.add_argument("--disable-extensions")  # تعطيل الإضافات لتجنب المشاكل
+
+# GUI Functions
+def toggle_password():
+    if pass_entry.cget('show') == '*':
+        pass_entry.config(show='')
+        toggle_btn.config(text='Hide')
+    else:
+        pass_entry.config(show='*')
+        toggle_btn.config(text='Show')
+
+def browse_excel():
+    filename = filedialog.askopenfilename(
+        title="Select Excel File",
+        filetypes=[("Excel files", "*.xlsx *.xls")]
+    )
+    if filename:
+        fc_entry.delete(0, 'end')
+        fc_entry.insert(0, filename)
+
+def browse_save_path():
+    directory = filedialog.askdirectory(title="Select Save Directory")
+    if directory:
+        save_entry.delete(0, 'end')
+        save_entry.insert(0, directory)
+
+def browse_chromedriver():
+    filename = filedialog.askopenfilename(
+        title="Select ChromeDriver",
+        filetypes=[("Executable files", "*.exe")]
+    )
+    if filename:
+        chrome_entry.delete(0, 'end')
+        chrome_entry.insert(0, filename)
+
+def validate_and_start():
+    global userNameFromOPS, Email, passwordFromUser, fc, save_path, chromedriver_path
+    
+    # Update variables from GUI
+    userNameFromOPS = name_entry.get()
+    Email = email_entry.get()
+    passwordFromUser = pass_entry.get()
+    fc = fc_entry.get()
+    save_path = save_entry.get()
+    chromedriver_path = chrome_entry.get()
+    
+    # Basic validation
+    if not all([userNameFromOPS, Email, passwordFromUser, fc, save_path, chromedriver_path]):
+        print("Please fill all fields")
+        return
+    
+    if not os.path.exists(fc):
+        print("Excel file does not exist")
+        return
+    
+    if not os.path.exists(chromedriver_path):
+        print("ChromeDriver path does not exist")
+        return
+    
+    # Start automation in a separate thread to avoid blocking GUI
+    import threading
+    thread = threading.Thread(target=runautimation)
+    thread.daemon = True
+    thread.start()
+
+# Login function is done
+def login(Email, passwordFromUser):
+    for attempt in range(3):
+        try:
+            time.sleep(1)
+            ops.get("https://ops.rer.sa")
+            username = WebDriverWait(ops, 30).until(EC.presence_of_element_located((By.ID, "username")))
+            username.send_keys(Email)
+            password = WebDriverWait(ops, 30).until(EC.presence_of_element_located((By.ID, "password")))
+            password.send_keys(passwordFromUser)
+            login_button = WebDriverWait(ops, 30).until(EC.element_to_be_clickable((By.NAME, "login")))
+            login_button.click()
+            print("Login successful.")
+            time.sleep(10)
+            wait_until_Caseworker_Portal_verification(ops)        
+            return "Login successful."
+        except TimeoutException:
+            ops.get("https://ops.rer.sa")
+            print("Login failed. Timeout occurred.")   
+    return "error login"      
+#wait
+def wait_until_Caseworker_Portal_verification(driver, timeout=10800):
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.invisibility_of_element_located(
+                (By.CSS_SELECTOR, "form > div > button")
+            )
+        )
+        print("✅ verification code.")
+        return True
+    except TimeoutException:
+        print("❌ Timeout: The verification code was not entered.")
+        return False
+    
+                    
+    
+# Improved searchFr function
+from selenium.webdriver.common.keys import Keys                   
+# Improved searchFr function
+# def searchFr(case, ops):
+#     """Search for a specific FR (case number) and return the result."""
+#     for i in range(8)  :
+#         if i == 5 :
+#             return "Record Not Found"
+#         # to input FR in search
+# #         ops.get(f"https://ops.rer.sa")
+# #         ops.get(f"https://ops.rer.sa/?q=SR202513562&filteredGraph=all")
+#         ops.get(f"https://ops.rer.sa/?q={case}&filteredGraph=all")
+# #         ops.refresh()
+#         search_box = WebDriverWait(ops, 10).until(EC.presence_of_element_located((
+#                 By.CSS_SELECTOR, 
+#                 "div.mt-9 input:last-of-type"
+#                     )))
+# #         search_box.clear()
+# #         search_box.send_keys(case)
+# #         search_box.send_keys(case, Keys.ENTER)
+#         time.sleep(4)
+# #         search_box.send_keys(Keys.ENTER)
+# #         search_box.send_keys(Keys.ENTER)
+#         shV = search_box.get_attribute('value')
+#         print(f"Searching for case: {shV}")
+#         time.sleep(.5)
+#         # befor check status chech fr at search same fr i wont
+#         if search_box.get_attribute('value') == case :
+#             # Find the FR number
+#             try :
+#                 assigned_fr = WebDriverWait(ops, 5).until(EC.presence_of_element_located((
+#                         By.CSS_SELECTOR, 
+#                         "div.mt-9 table tbody tr.cursor-pointer td:first-child div div a"
+#                             )))
+#                 # print(f"Found FR: {assigned_fr.get_attribute('innerHTML')}")
+#                 if assigned_fr.get_attribute('innerHTML')  ==  case :
+#                     return assigned_fr.get_attribute('innerHTML')
+#             except:
+#                 print (f"cant find {case}")
+# #                 nfind = WebDriverWait(ops, .5).until(EC.presence_of_element_located((
+# #                     By.CSS_SELECTOR ,
+# #                     "div.w-full.p-8.transition-all.duration-700  div  div:nth-child(2)  div  div.mt-9.my-5  div p"
+# #                         ))).get_attribute('innerHTML')
+# #                 print (nfind)
+
+def searchFr(case, ops):
+    """Search for a specific FR (case number) and return the result."""
+    for i in range(8)  :
+        if i == 5 :
+            return "Record Not Found"
+        ops.get(f"https://ops.rer.sa/?q={case}&filteredGraph=all")
+        time.sleep(1)
+        # befor check status chech fr at search same fr i wont
+        try :
+            assigned_fr = WebDriverWait(ops, 10).until(EC.presence_of_element_located((
+                    By.CSS_SELECTOR, 
+                    "div.mt-9 table tbody tr.cursor-pointer td:first-child div div a"
+                        )))
+            # print(f"Found FR: {assigned_fr.get_attribute('innerHTML')}")
+            if assigned_fr.get_attribute('innerHTML')  ==  case :
+                return assigned_fr.get_attribute('innerHTML')
+        except:
+            print (f"cant find {case}")
+
+# for check numeber of elements before get data where the FR
+def checkCountElement (ops , inCssSelecct) :  
+    div = WebDriverWait(ops, 5).until(EC.presence_of_element_located((
+                        By.CSS_SELECTOR, 
+                        inCssSelecct
+                            )))
+    # get all elements in div
+    children = div.find_elements(By.CSS_SELECTOR, "*") 
+    # count of elements
+    num_children = len(children)
+    # print
+    print("count in div:" , num_children)
+    return num_children
+
+
+
+# goPage
+def goPage(ops, retries=2 ):
+    for attempt in range(retries):
+        try:
+            go = WebDriverWait(ops, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.mt-12 div.mt-6 button:last-of-type")))
+            go.click()
+            print("page No 1")
+            try :
+                if getData (ops , "div.mt-12  div.block.text-15  p" , .5 ) == "Please complete the deed information to proceed." :
+                    print(getData (ops , "div.mt-12  div.block.text-15  p" , .5 ))
+                    return "Please complete the deed information to proceed."
+            except :
+                print("000000000000000000000000000000000000000000000")
+            try :
+                for i in range(2,4):
+                        go = WebDriverWait(ops, 5).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.mt-12 div.mt-6 button:last-of-type")))
+                        go.click()
+                        time.sleep(1)
+                        print(f"Page No {i}")
+                try :
+                    go = WebDriverWait(ops, 5).until(EC.element_to_be_clickable((By.CSS_SELECTOR,"div.mt-12 div.mt-6 div button:last-of-type")))
+                    go.click()
+                    print("page No 4")
+                    go = WebDriverWait(ops, 5).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.mt-12 div.mt-6 button:last-of-type")))
+                    go.click()
+                except :
+                    go = WebDriverWait(ops, .5).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.mt-12  div.mt-10  div  div:nth-child(6)")))
+                    go.click()
+                    print("error in page 2 we cant move to page 4")
+                    return "error page move to page 4"
+
+            except :
+                print("error")
+            time.sleep(.5)
+            go = WebDriverWait(ops, 1).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.mt-12  div.mt-10  div  div:nth-child(6)")))
+            go.click()    
+            print("end page")
+            return True # Success
+        except (TimeoutException):
+            print(f"Attempt {attempt + 1} failed, retrying...")
+            ops.refresh()
+            
+def clickTagLoadRequests(ops, button_text="Load Requests"):
+    try:
+        # Use XPath to locate the button by its visible text
+        button = WebDriverWait(ops, 2).until(
+            EC.element_to_be_clickable((By.XPATH, f"//button[contains(text(), '{button_text}')]"))
+        )
+        button.click()
+        print("Button clicked successfully.")
+    except TimeoutException:
+        print(f"Button with text '{button_text}' not found or not clickable.")
+        return "not clickable"
+
+#to inter or click
+def clickTag(ops , inCssSelecct) :
+    FR_Claim = WebDriverWait(ops, 20).until(EC.element_to_be_clickable((By.CSS_SELECTOR, inCssSelecct)))
+    FR_Claim.click()
+    try:
+        ajax_element = WebDriverWait(ops, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.transition-all")))
+        # print(f"Dynamic content loaded: {ajax_element.text}")
+    except TimeoutException:
+        print("Dynamic content did not load in time.")
+    time.sleep(.5)
+    
+
+
+#to get dat from web
+def getData(driver, css_selector, timeout=10):
+    try:
+        element = WebDriverWait(driver, timeout).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, css_selector))
+        )
+        data = element.text
+        # logging.info(f"Retrieved data from {css_selector}")
+        return data.strip() if data else "Not Found"
+    except TimeoutException:
+        return "Not Found"
+#to choise Geospatial Supervisors
+def must_click(ops , retries=2, delay=0.1):
+    for attempt in range(retries):
+        try:
+            # Locate and click the dropdown
+            drop = WebDriverWait(ops, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.mt-12 div.mr-3 div.drop-down-box.css-b62m3t-container")))
+            drop.click()
+            # body = ops.find_element(By.CSS_SELECTOR, "div.transition-all")
+            # body.get_attribute("outerHTML")
+            # print(body.get_attribute("outerHTML"))
+            # Locate and click the option in the dropdown
+            element = WebDriverWait(ops, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div#react-select-2-option-0")))
+            element.click()
+            print("Option selected successfully")
+            return True  # Success
+        except ( TimeoutException):
+            print(f"Attempt {attempt + 1} failed, retrying...")
+            ops.refresh()
+            #Load Requests
+            try :
+                che = clickTagLoadRequests(ops, button_text="Load Requests")
+                if che != "not clickable" : 
+                    wait_until_spinner_disappears(ops, timeout=10)
+                time.sleep(1)
+            except :
+                print("div.mt-12  button:nth-child(1)")    
+            goPage(ops, retries=3)
+            
+#wait
+def wait_until_spinner_disappears(driver, timeout=100):
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.invisibility_of_element_located(
+                (By.CSS_SELECTOR, "#__next  div  div.w-full.p-8.transition-all.duration-700  div  div.mt-12  div.w-full.justify-center.items-center  div  svg")
+            )
+        )
+        print("✅ Spinner disappeared.")
+        return True
+    except TimeoutException:
+        print("❌ Timeout: Spinner did not disappear.")
+        return False
+    
+    
+def waitTolaud(ops) :
+        try:
+            ajax_element = WebDriverWait(ops, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.transition-all")))
+            # print(f"Dynamic content loaded: {ajax_element.text}")
+        except TimeoutException:
+            print("Dynamic content did not load in time.")
+    
+#to  write comment and use must_click() to choise Case Worker
+def tocaseworker(ops, df , case):
+        waitTolaud(ops)
+        time.sleep(2.5)
+        must_click(ops)
+        print("Dropdown clicked successfully")
+        #comment for FR
+        #to get comment from excel
+        comText = "" 
+        fltr = df.loc[df['caseNumber'] == case ]
+        comText = str(fltr['comment'].values[0])
+        print(comText)
+        options_dict_ar = {
+                "تعديل أبعاد الأرض": "react-select-4-option-0",
+                "شطفة": "react-select-4-option-1",
+                "غرفة الكهرباء": "react-select-4-option-2",
+                "تجزئة": "react-select-4-option-3",
+                "تجزئة, شطفة": "react-select-4-option-3",
+                "دمج": "react-select-4-option-4",
+                "صك دمج": "react-select-4-option-4",
+                "دمج, تجزئة": "react-select-4-option-4",
+                "دمج, شطفة": "react-select-4-option-4",
+                "صك متعدد": "react-select-4-option-5",
+                "صك متعدد, شطفة": "react-select-4-option-5",
+                "تعديل أبعاد الأرض, صك متعدد": "react-select-4-option-5",
+                "بيانات وصفية": "react-select-4-option-6",
+                "وحدة عقارية": "react-select-4-option-7",
+                "خارج نطاق المنطقة المعلنة": "react-select-4-option-8",
+                "Others": "react-select-4-option-9"
+            }
+
+        options_dict_react_select= {
+                "react-select-4-option-0": "1",
+                "react-select-4-option-1": "2",
+                "react-select-4-option-2": "3",
+                "react-select-4-option-3": "4",
+                "react-select-4-option-4": "5",
+                "react-select-4-option-5": "6",
+                "react-select-4-option-6": "7",
+                "react-select-4-option-7": "8",
+                "react-select-4-option-8": "9",
+                "react-select-4-option-9": "10"
+            }
+
+
+        GEOdroplist= WebDriverWait(ops, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR,"#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div.mt-12 > div.bg-lightShade.mt-2.px-5 > form > div:nth-child(1) > div > div > div")))
+        GEOdroplist.click()        
+        
+        """
+        for select from list
+        
+            body > div > div.w-full.p-8.transition-all.duration-700 > div > div.mt-12 > div.bg-lightShade.py-\[38px\].mt-2.px-5 > form > div:nth-child(1) > div div:first-of-type div div div:nth-child(6)
+        """
+        
+        from operator import itemgetter
+        choiceIDGEO = itemgetter(comText)(options_dict_ar)
+        choiceIDGEOreact_select = itemgetter(choiceIDGEO)(options_dict_react_select)
+        print (choiceIDGEO)  
+        print (choiceIDGEOreact_select)
+        print (f"#{choiceIDGEO}")
+        try : 
+            choiceGEOdroplist= WebDriverWait(ops, 2).until(EC.element_to_be_clickable((By.CSS_SELECTOR,f"div#{choiceIDGEO}")))
+            choiceGEOdroplist.click()
+        except :
+            print("00000000000000000")
+        try :
+        
+            choiceGEOdroplistreact_select = WebDriverWait(ops, 1).until(EC.element_to_be_clickable((By.CSS_SELECTOR,f"form  div:nth-child(1)  div div:first-of-type div div div:nth-child({choiceIDGEOreact_select})")))
+            choiceGEOdroplistreact_select.click() 
+        except :
+            print("dropdone befor")
+        
+        proceed = WebDriverWait(ops, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR,"div.mt-12 div.mr-3 button:last-child")))
+        proceed.click()        
+        time.sleep(6)
+        print("Proceeding...")
+        print("Done...")
+        comText = ""
+#         ops.get("https://ops.rer.sa")
+
+
+# Main automation function
+def runautimation():
+    global ops, currentFr, Email, passwordFromUser, fc, df, frN , dfu, lastFR, report, frfloop 
+    # Update variables from GUI
+    global userNameFromOPS
+    userNameFromOPS = name_entry.get()
+    Email = email_entry.get()
+    passwordFromUser = pass_entry.get()
+    fc = fc_entry.get()
+    save_path = save_entry.get()
+    chromedriver_path = chrome_entry.get()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    
+    # Initialize data
+    df = pd.read_excel(fc)
+    frN = [row['caseNumber'].strip().upper() if isinstance(row['caseNumber'], str) else None for index , row in df.iterrows()]
+    frAll = frN.copy()
+    report = []
+    frfloop = []
+    currentFr = ""
+    dfu = pd.read_excel(fc)
+    lastFR = frN[-1] if frN else ""
+    
+    print(f"Loaded {len(frN)} cases. Last FR: {lastFR}")
+    
+    # ops = webdriver.Chrome(ChromeDriverManager().install())
+    # ops = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+    # ops = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+#     ops = webdriver.Chrome(options=options)
+    service = Service(chromedriver_path)
+    ops = webdriver.Chrome(service = service , options=options)
+    login(Email, passwordFromUser)
+    while currentFr != lastFR:
+#         ops.get("https://ops.rer.sa")
+        # Perform login
+        if not frfloop:
+            print("frist from while loop")
+        else :
+            currentFr = frfloop[-1]
+            st = frN.index(currentFr)
+            frN = frN[st:]
+            print(f"Processing FRs: {frN}")
+        try:
+            for CNO , case in enumerate(frN):
+                print(fc)
+                print(frAll.index(case)+1 , f"from {len(frAll)}")
+                currentFr = case
+#                 ops.get("https://ops.rer.sa")
+                if currentFr in frfloop:
+                    if frfloop.count(currentFr) >= 3:
+                        dfu.loc[df['caseNumber'] == case, 'status'] = "NotDone"
+                        continue 
+                # Save progress
+                frfloop.append(case)
+                
+                result = searchFr(case, ops)
+                if result and result != "Record Not Found" :
+                    # to check elemnts
+                    if checkCountElement (ops , "div.mt-9 table tbody tr.cursor-pointer td:last-of-type div ") == 1 :
+                        # get data to Update the report and DataFrame
+                        assigned_to = WebDriverWait(ops, 10).until(
+                            EC.presence_of_element_located((
+                                By.CSS_SELECTOR,
+                                "div.mt-9 table tbody tr.cursor-pointer td:last-of-type div p:last-of-type"
+                                ))).get_attribute('innerHTML')
+                        assigned_to_name = ""
+                    else :
+                        # get data to Update the report and DataFrame
+                        assigned_to = WebDriverWait(ops, 10).until(
+                            EC.presence_of_element_located((
+                                By.CSS_SELECTOR,
+                                "div.mt-9 table tbody tr.cursor-pointer td:last-of-type div p:nth-child(2)"
+                                ))).get_attribute('innerHTML')
+                        assigned_to_name = WebDriverWait(ops, 10).until(
+                            EC.presence_of_element_located((
+                                By.CSS_SELECTOR, 
+                                "div.mt-9 table tbody tr.cursor-pointer td:last-of-type div p:last-of-type"
+                                ))).get_attribute('innerHTML')
+                    dfu.loc[dfu['caseNumber'].map(str.strip).map(str.upper) == case, 'statusFromWeb']  = assigned_to
+                    dfu.loc[dfu['caseNumber'].map(str.strip).map(str.upper)  == case, 'statusFromWebTO'] = assigned_to_name
+                    report.append(f"FR: {case} ====> {assigned_to}\n")
+                    if   assigned_to == "Geospatial Specialist" and assigned_to_name in [ userNameFromOPS , "" ] :
+                        #to enter to case
+                        clickTag(ops , "div.mt-9 a")
+                        #to check
+                        casefromweb = getData(ops, "#__next  div  div.w-full.p-8.transition-all.duration-700  div  div.mt-12  div:nth-child(5)  div:nth-child(2)  p.pt-\[4px\].text-\[\#000000\].font-\[500\].text-\[14px\].md\:leading-6", timeout=10)
+                        print("from web" , casefromweb)
+                        if casefromweb == case :
+                            time.sleep(2)
+                            if assigned_to_name != userNameFromOPS :
+                                # to claim
+                                clickTag(ops , "div.mt-12 div:last-child div:last-child button.bg-textPrimary")
+                                                            #Load Requests
+                            try :
+                                che = clickTagLoadRequests(ops, button_text="Load Requests")
+                                if che != "not clickable" : 
+                                    wait_until_spinner_disappears(ops, timeout=60)
+                                time.sleep(1)
+#                                 print("div.mt-12"*20)
+                            except :
+                                print("div.mt-12  button:nth-child(1)")
+                            godone = goPage(ops, retries=2 )
+                            if godone == "Please complete the deed information to proceed." or godone == "error page move to page 4":
+                                print(godone)
+                                dfu.loc[dfu['caseNumber'] == case, 'status'] = godone
+#                                 ops.get("https://ops.rer.sa")
+                                continue
+                            else :  
+                                tocaseworker(ops , df , case)
+                                time.sleep(2)
+                                dfu.loc[dfu['caseNumber'] == case, 'status'] = "Done"
+                        else :
+#                             ops.get("https://ops.rer.sa")
+                            dfu.loc[dfu['caseNumber'] == case, 'status'] = "NotDone becouse we dont find"
+                            print ("NotDone")
+                            break
+                    elif   assigned_to == "Geospatial Specialist" and assigned_to_name != userNameFromOPS :
+                        dfu.loc[dfu['caseNumber'] == case, 'status'] = "claimed by other"
+                    elif   assigned_to == "Geospatial Supervisors":
+                        dfu.loc[dfu['caseNumber'] == case, 'status'] = "Done Before From Editor"
+                    elif   assigned_to == "Geospatial Supervisors":
+                        dfu.loc[dfu['caseNumber'] == case, 'status'] = "Done Before To Super"
+                    else :
+                        dfu.loc[dfu['caseNumber'] == case, 'status'] = "Done Before From Editor"
+                    print(f"FR {case} processed. Assigned to: {assigned_to}")
+                else:
+                    # Handle not found case
+                    dfu.loc[dfu['caseNumber'] == case, 'statusFromWeb'] = "Record Not Found"
+                    dfu.loc[dfu['caseNumber'] == case, 'status'] = "Not Done"
+                    report.append(f"FR: {case} Record Not Found\n")
+                    print(f"FR {case} not found.")
+        except Exception as e:
+            ops.get("https://ops.rer.sa")
+            print(f"An error occurred during automation: {e}")
+        finally:
+            print("Done")
+#             Save report and updated Excel file
+            with open(f"{save_path}\\FWE_RPA_Report - editor{timestamp}.txt", "w", encoding="utf-8") as report_file:
+                report_file.write("text report for test.............................\n")
+                report_file.write("".join(report))
+            dfu.to_excel(f"{save_path}\\FWE_RPA_Report - editor{timestamp}.xlsx", index=False)
+#             os.startfile(f"{save_path}\\FWE_RPA_Report - editor{timestamp}.txt")
+            print("Report saved. Updated Excel file created.")
+    ops.quit()
+
+# Build GUI
+root = Tk()
+root.title("Officer To Super RPA")
+root.geometry("450x250")
+
+# App icon
+try:
+    icon_paths = [
+        "Asset_RPA.ico",
+        os.path.join(current_directory, "Asset_RPA.ico"),
+        "./Asset_RPA.ico",
+        "\\\\10.150.40.49\\las\\aboelmagd\\OPS RPA\\Asset_RPA.ico"
+    ]
+    icon_loaded = False
+    for icon_path in icon_paths:
+        try:
+            if os.path.exists(icon_path):
+                root.iconbitmap(icon_path)
+                icon_loaded = True
+                print(f"تم تحميل الأيقونة من: {icon_path}")
+                break
+        except:
+            continue
+except:
+    print("لم يتم العثور على أيقونة مناسبة")
+
+# Canvas and background
+canvas = Canvas(root, width=480, height=320, highlightthickness=0)
+canvas.pack(fill="both", expand=True)
+
+try:
+    try:
+        bg_image = Image.open("\\\\10.150.40.49\\las\\aboelmagd\\OPS RPA\\background.jpg")
+    except:
+        bg_image = Image.open(os.path.join(current_directory, "background.jpg"))
+    bg_image = bg_image.resize((450,250))
+    bg_photo = ImageTk.PhotoImage(bg_image)
+    canvas.create_image(0, 0, image=bg_photo, anchor="nw")
+    canvas.bg_photo = bg_photo
+except:
+    canvas.configure(bg="#0B3656")
+
+# Fields and buttons on canvas
+canvas.create_text(20, 30, text="User Name:", anchor="w", font=("Arial", 10, "bold"), fill="#E6EDF4")
+name_entry = Entry(root, width=30, bg="white", fg="black", font=("Arial", 9))
+name_entry.insert(0, userNameFromOPS)
+canvas.create_window(120, 30, anchor="w", window=name_entry)
+
+canvas.create_text(20, 60, text="Email:", anchor="w", font=("Arial", 10, "bold"), fill="#E6EDF4")
+email_entry = Entry(root, width=30, bg="white", fg="black", font=("Arial", 9))
+email_entry.insert(0, Email)
+canvas.create_window(120, 60, anchor="w", window=email_entry)
+
+canvas.create_text(20, 90, text="Password:", anchor="w", font=("Arial", 10, "bold"), fill="#E6EDF4")
+pass_entry = Entry(root, width=25, bg="white", fg="black", font=("Arial", 9), show="*")
+pass_entry.insert(0, passwordFromUser)
+canvas.create_window(120, 90, anchor="w", window=pass_entry)
+
+toggle_btn = Button(root, text="Show", command=toggle_password, width=8, bg="#387580", fg="#E6EDF4", font=("Arial", 8))
+canvas.create_window(350, 90, anchor="w", window=toggle_btn)
+
+canvas.create_text(20, 120, text="Excel File:", anchor="w", font=("Arial", 10, "bold"), fill="#E6EDF4")
+fc_entry = Entry(root, width=26, bg="white", fg="black", font=("Arial", 9))
+fc_entry.insert(0, fc)
+canvas.create_window(120, 120, anchor="w", window=fc_entry)
+
+browse_fc_btn = Button(root, text="Browse", command=browse_excel, width=8, bg="#387580", fg="#E6EDF4", font=("Arial", 8))
+canvas.create_window(350, 120, anchor="w", window=browse_fc_btn)
+
+canvas.create_text(20, 150, text="Save Path:", anchor="w", font=("Arial", 10, "bold"), fill="#E6EDF4")
+save_entry = Entry(root, width=25, bg="white", fg="black", font=("Arial", 9))
+save_entry.insert(0, save_path)
+canvas.create_window(120, 150, anchor="w", window=save_entry)
+
+browse_save_btn = Button(root, text="Browse", command=browse_save_path, width=8, bg="#387580", fg="#E6EDF4", font=("Arial", 8))
+canvas.create_window(350, 150, anchor="w", window=browse_save_btn)
+
+canvas.create_text(20, 180, text="ChromeDriver:", anchor="w", font=("Arial", 10, "bold"), fill="#E6EDF4")
+chrome_entry = Entry(root, width=26, bg="white", fg="black", font=("Arial", 9))
+chrome_entry.insert(0, chromedriver_path)
+canvas.create_window(120, 180, anchor="w", window=chrome_entry)
+
+browse_chrome_btn = Button(root, text="Browse", command=browse_chromedriver, width=8, bg="#387580", fg="#E6EDF4", font=("Arial", 8))
+canvas.create_window(350, 180, anchor="w", window=browse_chrome_btn)
+
+start_btn = Button(root, text="Start Automation", command=validate_and_start, width=18, bg="#387580", fg="#E6EDF4", font=("Arial", 10, "bold"))
+canvas.create_window(260, 220, window=start_btn)
+
+# Run GUI
+if __name__ == "__main__":
+    root.mainloop()
