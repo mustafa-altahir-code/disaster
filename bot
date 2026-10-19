@@ -1,4 +1,3 @@
-
 (() => {
 
 if (window.__frHighlightLoaded) return;
@@ -29,7 +28,7 @@ return function(...args) {
 /* ==================== الإعدادات ==================== */
 
 const CONFIG = {
-frRegex: /\b(fr\d+)\b/gi,
+frRegex: /\b((?:fr|du)\d+)\b/gi, // دعم FR و DU
 panelWidth: 'auto',
 minPanelWidth: 420,
 maxPanelWidth: 750,
@@ -441,7 +440,7 @@ for (const el of allElements) {
         const style = window.getComputedStyle(el);
         const overflowY = style.overflowY;
         if (overflowY === 'auto' || overflowY === 'scroll') {
-            if (el.querySelector('.fr-badge') || el.querySelector('[data-tid="message"]') || el.innerText.includes('fr')) {
+            if (el.querySelector('.fr-badge') || el.querySelector('[data-tid="message"]') || /(fr|du)/i.test(el.innerText)) {
                 return el;
             }
         }
@@ -735,7 +734,7 @@ requestAnimationFrame(() => {
                 updated++;
             }
             
-            // ✅ عرض زمن المعالجة
+            // عرض زمن المعالجة
             if (data.processingTimeFormatted) {
                 if (timeCell) {
                     timeCell.textContent = data.processingTimeFormatted;
@@ -761,7 +760,7 @@ requestAnimationFrame(() => {
 localStorage.setItem(CONFIG.frsDataKey, JSON.stringify(state.frsData));
 }
 
-// ✅ دالة تنسيق زمن المعالجة للعرض
+// دالة تنسيق زمن المعالجة للعرض
 function formatProcessingTimeDisplay(seconds) {
 if (seconds < 60) {
     return `${seconds}ث`;
@@ -796,7 +795,7 @@ requestAnimationFrame(() => {
             statusCell.textContent = icon;
             statusCell.title = icon ? `${icon} ${data.timestamp || ''}` : '';
             
-            // ✅ عرض زمن المعالجة
+            // عرض زمن المعالجة
             if (data.processingTimeFormatted) {
                 if (timeCell) {
                     timeCell.textContent = data.processingTimeFormatted;
@@ -829,13 +828,15 @@ if (typeof chrome !== 'undefined' && chrome.storage) {
 
 function findFRInPage() {
 const frEl = document.querySelector('span.uppercase');
-const frMatch = frEl?.innerText.trim().match(/FR\d+/);
+const frMatch = frEl?.innerText.trim().match(/(FR|DU)\d+/i);
 return frMatch ? frMatch[0] : null;
 }
 
 async function updateFRData(fr, updates) {
-if (!fr || !fr.startsWith("FR")) {
-    console.warn("❌ Invalid FR. Not saving.");
+if (!fr) return;
+const frUpper = fr.toString().toUpperCase();
+if (!frUpper.startsWith("FR") && !frUpper.startsWith("DU")) {
+    console.warn("❌ Invalid FR/DU ID. Not saving.");
     return;
 }
 const frLower = fr.toString().toLowerCase();
@@ -862,7 +863,7 @@ if (typeof chrome !== 'undefined' && chrome.storage) {
         });
     });
 } else {
-    const key = `FR_${frLower}`;
+    const key = `REQ_${frLower}`;
     const existing = JSON.parse(localStorage.getItem(key) || '{}');
     const updatedData = { ...existing, ...updates, timestamp: new Date().toLocaleString() };
     localStorage.setItem(key, JSON.stringify(updatedData));
@@ -949,7 +950,7 @@ return 'غير معروف';
 const TextAnalyzer = {
 analyze(text) {
     const results = [];
-    const regex = /\b(fr\d+)\b/gi;
+    const regex = /\b((?:fr|du)\d+)\b/gi;
     let match;
     while ((match = regex.exec(text)) !== null) {
         results.push({
@@ -972,7 +973,7 @@ try {
     }
     
     const rows = [];
-    rows.push(['#', 'FR Value', 'المرسل', 'التاريخ', 'الوقت', 'الحالة', 'زمن المعالجة']);
+    rows.push(['#', 'Case Number', 'المرسل', 'التاريخ', 'الوقت', 'الحالة', 'زمن المعالجة']);
     
     visibleRows.forEach((row, index) => {
         const frValue = row.cells[1]?.textContent || '';
@@ -988,7 +989,7 @@ try {
     const csvContent = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob(['\uFEFF' + csvContent], {type: 'text/csv;charset=utf-8;'});
     const url = URL.createObjectURL(blob);
-    const a = createElementSafe("a", { href: url, download: `frs_export_${new Date().toISOString().slice(0,10)}.csv` });
+    const a = createElementSafe("a", { href: url, download: `requests_export_${new Date().toISOString().slice(0,10)}.csv` });
     a.click();
     URL.revokeObjectURL(url);
     console.log(`📥 تم تصدير ${rows.length - 1} طلب (مرئي) إلى CSV`);
@@ -1361,7 +1362,6 @@ style.textContent = `
         border-color: var(--theme-primary);
         box-shadow: 0 30px 50px -15px var(--theme-primary);
     }
-    /* إطار حول رقم الطلب حسب الحالة */
     .fr-badge {
         border: 2px solid #9ca3af;
         transition: all .3s ease;
@@ -1605,13 +1605,11 @@ const header = createElementSafe("div", { className: "fr-panel-header" });
 
 const titleContainer = createElementSafe("div", { style: { display: 'flex', alignItems: 'center', gap: '8px' } });
 titleContainer.appendChild(createElementSafe("span", { style: { fontSize: '20px' } }, "🔍"));
-const titleSpan = createElementSafe("span", { id: "fr-panel-title", style: { fontWeight: '600', color: 'var(--theme-accent)' } }, "FR Detected (0)");
+const titleSpan = createElementSafe("span", { id: "fr-panel-title", style: { fontWeight: '600', color: 'var(--theme-accent)' } }, "Requests Detected (0)");
 titleContainer.appendChild(titleSpan);
 header.appendChild(titleContainer);
 
 const controls = createElementSafe("div", { className: "fr-panel-controls" });
-
-// الترتيب: 🚫 ⏯️ ✅ 🔲 ❌ 🌐 📥 –
 
 // زر الحظر 🚫
 const blockBtn = createElementSafe("span", { 
@@ -1851,7 +1849,6 @@ pauseBtn.onclick = (e) => {
     togglePauseState();
 };
 
-// نقر يمين: إيقاف مؤقت بمدة محددة
 pauseBtn.oncontextmenu = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1880,7 +1877,6 @@ controls.appendChild(openModeBtn);
 const selectBtn = createElementSafe("span", { id: "fr-select-btn", className: "fr-panel-btn", title: "فتح الطلبات المحددة" }, "✅");
 controls.appendChild(selectBtn);
 
-// باقي الأزرار 🔲 ❌ 📥 –
 const remainingButtons = [
     { id: "fr-select-all-btn", text: "🔲", title: "تحديد الكل" },
     { id: "fr-clear-btn", text: "❌", title: "إلغاء التحديد" },
@@ -1913,7 +1909,7 @@ content.appendChild(stats);
 const toolbar = createElementSafe("div", { className: "fr-search-toolbar" });
 const searchInput = createElementSafe("input", { 
     type: "text", 
-    placeholder: "🔍 بحث عن FR أو مرسل...", 
+    placeholder: "🔍 بحث عن FR / DU أو مرسل...", 
     style: { flex: 1 } 
 });
 toolbar.appendChild(searchInput);
@@ -1932,7 +1928,7 @@ const thead = createElementSafe("thead");
 const headerRow = createElementSafe("tr");
 const headers = [
     { text: "#", title: "انقر لتحديد الطلب" },
-    { text: "FR", title: "قيمة FR" },
+    { text: "الطلب", title: "رقم الطلب (FR/DU)" },
     { text: "المرسل", title: "اسم المرسل" },
     { text: "التاريخ", title: "التاريخ", id: "sort-date" },
     { text: "الوقت", title: "الوقت", id: "sort-time" },
@@ -2044,15 +2040,12 @@ confirmBtn.onclick = () => {
     const minutes = parseInt(durationSelect.value);
     
     if (minutes === 0) {
-        // إيقاف دائم حتى الإلغاء
         state.autoOpenPaused = true;
         state.pauseUntil = null;
     } else {
-        // إيقاف مؤقت
         state.autoOpenPaused = true;
         state.pauseUntil = Date.now() + minutes * 60 * 1000;
         
-        // ضبط مؤقت للإلغاء التلقائي
         setTimeout(() => {
             if (state.pauseUntil && Date.now() >= state.pauseUntil) {
                 state.autoOpenPaused = false;
@@ -2292,7 +2285,6 @@ const tdStatus = createElementSafe("td", {
 tdStatus.style.color = '#f59e0b';
 row.appendChild(tdStatus);
 
-// عمود زمن المعالجة
 const tdTime = createElementSafe("td", { 
     className: "fr-time-cell", 
     title: "زمن المعالجة" 
@@ -2305,7 +2297,6 @@ Array.from(tbody.children).forEach((r, idx) => {
     r.cells[0].textContent = (idx + 1).toString();
 });
 
-// تسجيل وقت الاكتشاف
 const detectedTime = Date.now();
 
 const frData = {
@@ -2342,7 +2333,6 @@ try {
 } catch { return true; }
 }
 
-// تحديث createBadge مع الإطارات حسب الحالة
 function createBadge(value, senderName, status = 'PENDING') {
 const frLower = value.toLowerCase();
 const badge = createElementSafe("span", {
@@ -2557,7 +2547,6 @@ if (changed) {
     refreshBlockedUsersUI();
 }
 
-// فحص انتهاء الإيقاف المؤقت
 if (state.pauseUntil && Date.now() >= state.pauseUntil) {
     state.autoOpenPaused = false;
     state.pauseUntil = null;
@@ -2606,7 +2595,7 @@ if (document.readyState === "loading") {
         setTimeout(async () => {
             await forceUpdateAllFromSharedFile();
             filterTable(searchInput.value, filterSelect.value);
-            console.log('✅ FR Highlighter for Teams جاهز للعمل');
+            console.log('✅ Requests (FR/DU) Highlighter for Teams جاهز للعمل');
         }, 2000);
     }, { once: true });
 } else {
@@ -2621,7 +2610,7 @@ if (document.readyState === "loading") {
         setTimeout(async () => {
             await forceUpdateAllFromSharedFile();
             filterTable(searchInput.value, filterSelect.value);
-            console.log('✅ FR Highlighter for Teams جاهز للعمل');
+            console.log('✅ Requests (FR/DU) Highlighter for Teams جاهز للعمل');
         }, 2000);
     }, 0);
 }
