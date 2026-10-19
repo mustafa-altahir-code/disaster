@@ -2,12 +2,8 @@
   'use strict';
 
   const LIST_SELECTOR = "#upgrade-deed-real-estate-number";
-
-  // إعدادات التوجيه والأسهم
   const MAX_CLICKS = 6;
-  const CLICK_INTERVAL = 100;
-  const SCROLL_TIMES = 3;
-  const SCROLL_INTERVAL = 500;
+  const CLICK_INTERVAL = 25; // نقرات سريعة جداً بفارق 25 ملي ثانية
 
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -19,73 +15,51 @@
   }
 
   // ==========================================
-  // 1. النزول لأسفل الصفحة لضمان تحميل العناصر
+  // النقر السريع على السهم والوصول الفوري
   // ==========================================
-  async function scrollToBottomRepeated(times = SCROLL_TIMES, interval = SCROLL_INTERVAL) {
-    for (let i = 1; i <= times; i++) {
-      const heightBefore = document.body.scrollHeight;
-      window.scrollTo({
-        top: heightBefore,
-        behavior: "smooth"
-      });
-      await delay(interval);
-    }
-  }
-
-  // ==========================================
-  // 2. الضغط على زر السهم للانتقال للمراجعة
-  // ==========================================
-  async function navigateToReviewStep() {
+  async function fastNavigateToReview() {
     let clicked = 0;
     let retries = 0;
-    const maxRetries = 20; // مهلة انتظار ظهور السهم أول مرة (10 ثوانٍ)
+    const maxRetries = 25; // انتظار ظهور أول سهم بحد أقصى ~5 ثوانٍ
 
     while (clicked < MAX_CLICKS && retries < maxRetries) {
-      const img = document.querySelector('button img[src$="left.svg"]');
+      // إذا كانت القائمة قد ظهرت بالفعل، نتوقف عن النقر فوراً
+      if (document.querySelector(LIST_SELECTOR)) {
+        break;
+      }
 
+      const img = document.querySelector('button img[src$="left.svg"]');
       if (!img) {
         retries++;
-        await delay(500);
+        await delay(200);
         continue;
       }
 
       const btn = img.closest("button");
       if (!btn) {
         retries++;
-        await delay(500);
+        await delay(200);
         continue;
       }
 
-      try {
-        btn.dispatchEvent(
-          new MouseEvent("click", {
-            bubbles: true,
-            cancelable: true,
-            view: window
-          })
-        );
-        clicked++;
-      } catch (error) {
-        console.error("[DU Detail] Click error:", error);
-      }
+      // نقرة برمجية فورية
+      btn.click();
+      clicked++;
 
       await delay(CLICK_INTERVAL);
     }
-
-    await delay(500);
-    await scrollToBottomRepeated();
   }
 
   // ==========================================
-  // 3. انتظار وظهور قائمة الـ PCP
+  // انتظار القائمة مع مراقبة سريعة
   // ==========================================
-  function waitForElement(selector, timeout = 15000) {
+  function waitForList(timeout = 12000) {
     return new Promise((resolve, reject) => {
-      const el = document.querySelector(selector);
+      const el = document.querySelector(LIST_SELECTOR);
       if (el) return resolve(el);
 
       const observer = new MutationObserver(() => {
-        const target = document.querySelector(selector);
+        const target = document.querySelector(LIST_SELECTOR);
         if (target) {
           observer.disconnect();
           resolve(target);
@@ -96,26 +70,24 @@
 
       setTimeout(() => {
         observer.disconnect();
-        reject(new Error(`تعذر العثور على القائمة: ${selector}`));
+        reject(new Error(`تعذر العثور على القائمة: ${LIST_SELECTOR}`));
       }, timeout);
     });
   }
 
   // ==========================================
-  // 4. استخراج القيم والتمييز البصري
+  // استخراج القيم وإرسال النتيجة
   // ==========================================
-  async function executeExtraction() {
+  async function executeFastExtraction() {
     const orderId = getOrderIdFromUrl();
 
     try {
-      // أ- الانتقال أولاً عبر الضغط على الأسهم والتمرير
-      await navigateToReviewStep();
+      // 1. النقر السريع المتتابع بدون أي تأخير تمرير
+      await fastNavigateToReview();
 
-      // ب- انتظار ظهور قائمة أرقام العقارات / الصكوك
-      const listElement = await waitForElement(LIST_SELECTOR, 15000);
+      // 2. التقاط القائمة
+      const listElement = await waitForList(12000);
       listElement.classList.add("du-highlight-green");
-
-      await delay(300);
 
       const extractedValues = [];
 
@@ -155,7 +127,7 @@
         throw new Error("القائمة لا تحتوي على صكوك/عقارات");
       }
 
-      // ج- إرسال البيانات الناجحة للـ Background ليغلق التبويب
+      // 3. إرسال النجاح فوراً لإغلاق التبويب
       chrome.runtime.sendMessage({
         action: "DATA_EXTRACTED_SUCCESS",
         orderId: orderId,
@@ -163,8 +135,6 @@
       });
 
     } catch (err) {
-      console.warn("[DU Detail Extractor]:", err.message);
-      // د- إرسال تقرير الفشل ليغلق Background التبويب ويتابع ما بعده
       chrome.runtime.sendMessage({
         action: "EXTRACTION_FAILED",
         orderId: orderId,
@@ -173,10 +143,9 @@
     }
   }
 
-  // بدء التنفيذ بعد استقرار الصفحة
   if (document.readyState === "complete") {
-    setTimeout(executeExtraction, 600);
+    setTimeout(executeFastExtraction, 150);
   } else {
-    window.addEventListener("load", () => setTimeout(executeExtraction, 600));
+    window.addEventListener("load", () => setTimeout(executeFastExtraction, 150));
   }
 })();
