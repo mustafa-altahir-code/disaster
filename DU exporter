@@ -1,0 +1,18 @@
+
+(async () => {
+  const xpath = "/html/body/div[1]/div[1]/div[2]/div[1]/div[6]/div[9]/div[1]/div[1]/span[1]";
+  const btn = document.evaluate(xpath, document, null, 9, null).singleNodeValue;
+  if (!btn) return console.log("الزر غير موجود");
+
+  btn.click();
+  await new Promise(r => setTimeout(r, 1000));
+
+  const panel = document.querySelector(
+    String.raw`div > div.transition-all.flex-row-reverse.duration-700 > div.w-full.p-8.transition-all.duration-700:nth-of-type(2) > div.max-w-8xl.font-ibm-sans.inner-container.relative > div.mt-12:nth-of-type(6) > div.bg-lightShade.py-\[18px\].px-2.mt-2:nth-of-type(9)`
+  );
+
+  if (!panel) return console.log("0");
+
+  const count = (panel.innerText.match(/تفاصيل التوصية/g) || []).length;
+  console.log(count);
+})();
