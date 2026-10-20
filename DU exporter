@@ -1,4 +1,8 @@
-
+نعدل خانة الصفحة الى الحالة في الجدول
+اما نجاح او فشل
+نجاح اذا كانت:
+1-حالة الطلب تحتوي على أخصائي المعلومات الجيومكانية
+2-اذا كانت خانة التعليقات =0 بعد نسخ الPCP وتطبيق الكود ادناه
 (async () => {
   const xpath = "/html/body/div[1]/div[1]/div[2]/div[1]/div[6]/div[9]/div[1]/div[1]/span[1]";
   const btn = document.evaluate(xpath, document, null, 9, null).singleNodeValue;
@@ -16,3 +20,6 @@
   const count = (panel.innerText.match(/تفاصيل التوصية/g) || []).length;
   console.log(count);
 })();
+
+عدا ذلك فشل
+يمكن استخدام الرموز افصل
