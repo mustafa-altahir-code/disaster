@@ -1,199 +1,158 @@
 // ========================
-// platform-content.js - النسخة النهائية (بدون Step0، بدون سرعات، بدون OTP)
-// ========================
-
-// ========================
-// الثوابت الأخرى
+// platform-content.js - النسخة المحدثة (دعم DU & FR + أسهم سريعة + نجاح بتغير الرابط)
 // ========================
 
 const MAX_RETRIES = 1;
-const SUCCESS_TIMEOUT = 8000;
-const LONG_TIMEOUT = 20000; // 20 ثانية
+const SUCCESS_TIMEOUT = 10000; // 10 ثواني لانتظار التحويل بعد المتابعة
+const LONG_TIMEOUT = 20000;
 let currentFR = null;
 let pageClosed = false;
-let processStartTime = null; // وقت بدء معالجة الطلب
+let processStartTime = null;
 
 // ========================
 // دوال مساعدة
 // ========================
 
 function extractFR() {
-try {
-// محاولة استخراج FR من الصفحة الحالية
-const frElement = document.querySelector('#__next span.uppercase, [class*="fr"], [class*="FR"], .font-mono, code');
-if (frElement) {
-const frMatch = frElement.textContent?.match(/FR\d+/i);
-if (frMatch) {
-return frMatch[0].toLowerCase();
-}
-}
+  try {
+    const el = document.querySelector('#__next span.uppercase, [class*="fr"], [class*="FR"], [class*="du"], [class*="DU"], .font-mono, code');
+    if (el) {
+      const match = el.textContent?.match(/(?:FR|DU)\d+/i);
+      if (match) return match[0].toLowerCase();
+    }
 
-// محاولة من URL
-const urlMatch = window.location.href.match(/FR\d+/i);
-if (urlMatch) {
-return urlMatch[0].toLowerCase();
-}
+    const urlMatch = window.location.href.match(/(?:FR|DU)\d+/i);
+    if (urlMatch) return urlMatch[0].toLowerCase();
 
-return null;
-} catch (err) {
-console.error('❌ Error extracting FR:', err);
-return null;
-}
+    return null;
+  } catch (err) {
+    console.error('❌ Error extracting Case ID:', err);
+    return null;
+  }
 }
 
 function updateFRData(fr, updates) {
-return new Promise((resolve) => {
-if (!fr || !fr.startsWith("fr")) { console.warn("❌ Invalid FR"); return resolve(); }
-const frLower = fr.toLowerCase();
+  return new Promise((resolve) => {
+    if (!fr) return resolve();
+    const frLower = fr.toLowerCase();
+    if (!frLower.startsWith("fr") && !frLower.startsWith("du")) {
+      console.warn("❌ Invalid Case ID");
+      return resolve();
+    }
 
-// إذا كان التحديث يحتوي على message (SUCCESS/FAILED) وكان لدينا وقت بدء
-if ((updates.message === 'SUCCESS' || updates.message === 'FAILED' || updates.message === 'CLIENT_RETURN_FAILED') && processStartTime) {
-const processingTime = Math.floor((Date.now() - processStartTime) / 1000);
-updates.processingTime = processingTime;
-updates.processingTimeFormatted = formatProcessingTime(processingTime);
-console.log(`⏱️ زمن المعالجة لـ ${frLower}: ${updates.processingTimeFormatted}`);
+    if ((updates.message === 'SUCCESS' || updates.message === 'FAILED' || updates.message === 'CLIENT_RETURN_FAILED') && processStartTime) {
+      const processingTime = Math.floor((Date.now() - processStartTime) / 1000);
+      updates.processingTime = processingTime;
+      updates.processingTimeFormatted = formatProcessingTime(processingTime);
+      console.log(`⏱️ زمن المعالجة لـ ${frLower}: ${updates.processingTimeFormatted}`);
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.get(['fr_database'], (result) => {
+        let db = result.fr_database || { frs: {} };
+        db.frs[frLower] = { ...db.frs[frLower], fr: frLower, ...updates, timestamp: new Date().toLocaleString() };
+        db.lastUpdate = new Date().toISOString();
+        chrome.storage.local.set({ fr_database: db }, () => {
+          console.log(`💾 تم تحديث ${frLower}`, updates);
+          resolve();
+        });
+      });
+    } else {
+      const key = `REQ_${frLower}`;
+      const existing = JSON.parse(localStorage.getItem(key) || '{}');
+      localStorage.setItem(key, JSON.stringify({ ...existing, ...updates, timestamp: new Date().toLocaleString() }));
+      resolve();
+    }
+  });
 }
 
-if (typeof chrome !== 'undefined' && chrome.storage) {
-chrome.storage.local.get(['fr_database'], (result) => {
-let db = result.fr_database || { frs: {} };
-db.frs[frLower] = { ...db.frs[frLower], fr: frLower, ...updates, timestamp: new Date().toLocaleString() };
-db.lastUpdate = new Date().toISOString();
-chrome.storage.local.set({ fr_database: db }, () => {
-console.log(`💾 تم تحديث ${frLower}`, updates);
-resolve();
-});
-});
-} else {
-const key = `FR_${frLower}`;
-const existing = JSON.parse(localStorage.getItem(key) || '{}');
-localStorage.setItem(key, JSON.stringify({ ...existing, ...updates, timestamp: new Date().toLocaleString() }));
-resolve();
-}
-});
-}
-
-// دالة تنسيق زمن المعالجة
 function formatProcessingTime(seconds) {
-if (seconds < 60) {
-return `${seconds}ث`;
-} else {
-const minutes = Math.floor(seconds / 60);
-const remainingSeconds = seconds % 60;
-return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}د`;
-}
+  if (seconds < 60) {
+    return `${seconds}ث`;
+  } else {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}د`;
+  }
 }
 
 function getFRData(fr) {
-return new Promise((resolve) => {
-const frLower = fr.toLowerCase();
-if (typeof chrome !== 'undefined' && chrome.storage) {
-chrome.storage.local.get(['fr_database'], (result) => {
-resolve(result.fr_database?.frs?.[frLower] || null);
-});
-} else {
-const key = `FR_${frLower}`;
-const data = localStorage.getItem(key);
-resolve(data ? JSON.parse(data) : null);
-}
-});
-}
-
-// دالة انتظار العناصر
-function waitForElement(selector, timeout = LONG_TIMEOUT) {
-return new Promise((resolve) => {
-const startTime = Date.now();
-const interval = setInterval(() => {
-const el = document.querySelector(selector);
-if (el) {
-clearInterval(interval);
-resolve(el);
-} else if (Date.now() - startTime > timeout) {
-clearInterval(interval);
-console.warn(`⚠️ لم يتم العثور على "${selector}" بعد ${timeout}ms`);
-resolve(null);
-}
-}, 300);
-});
+  return new Promise((resolve) => {
+    const frLower = fr.toLowerCase();
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.get(['fr_database'], (result) => {
+        resolve(result.fr_database?.frs?.[frLower] || null);
+      });
+    } else {
+      const key = `REQ_${frLower}`;
+      const data = localStorage.getItem(key);
+      resolve(data ? JSON.parse(data) : null);
+    }
+  });
 }
 
 function delay(ms) {
-return new Promise(res => setTimeout(res, ms));
+  return new Promise(res => setTimeout(res, ms));
 }
 
 function checkForUnauthorized() {
-const bodyText = document.body.innerText || '';
-const htmlText = document.body.innerHTML || '';
-const accessDeniedBox = document.querySelector('.flex.justify-between.w-full.p-5');
-const keywords = [
-'غير مصرح',
-'الصلاحية',
-'Authorized',
-'You are not authorized to claim the case',
-'ليس لديك صلاحية',
-'لا تملك الصلاحية',
-'رفض الوصول',
-'تم رفض الوصول',
-'403 Forbidden',
-'Access Denied'
-];
+  const bodyText = document.body.innerText || '';
+  const htmlText = document.body.innerHTML || '';
+  const keywords = [
+    'غير مصرح', 'الصلاحية', 'Authorized', 'You are not authorized to claim the case',
+    'ليس لديك صلاحية', 'لا تملك الصلاحية', 'رفض الوصول', 'تم رفض الوصول',
+    '403 Forbidden', 'Access Denied'
+  ];
 
-const hasAccessDeniedBox = [...document.querySelectorAll('p')]
-.some(p => p.textContent.trim() === 'تم رفض الوصول');
+  const hasAccessDeniedBox = [...document.querySelectorAll('p')]
+    .some(p => p.textContent.trim() === 'تم رفض الوصول');
 
-return (
-keywords.some(k => bodyText.includes(k) || htmlText.includes(k))
-|| hasAccessDeniedBox
-);
+  return (keywords.some(k => bodyText.includes(k) || htmlText.includes(k)) || hasAccessDeniedBox);
 }
 
 async function closeTabSafely() {
-try {
-if (typeof chrome !== 'undefined' && chrome.runtime) chrome.runtime.sendMessage({ action: "closeTab" });
-else window.close();
-setTimeout(() => { if (!pageClosed) window.close(); }, 500);
-} catch (e) { window.close(); }
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime) chrome.runtime.sendMessage({ action: "closeTab" });
+    else window.close();
+    setTimeout(() => { if (!pageClosed) window.close(); }, 500);
+  } catch (e) { window.close(); }
 }
 
 async function checkAndCloseIfUnauthorized(stepName = '', fr = null) {
-if (pageClosed) return true;
-if (checkForUnauthorized()) {
-console.log(`❌ منع وصول في ${stepName}`);
-const frToSave = fr || currentFR;
-if (frToSave) await updateFRData(frToSave, { message: "SUCCESS", retryCount: 0 });
-pageClosed = true;
-await delay(500);
-await closeTabSafely();
-return true;
-}
-return false;
+  if (pageClosed) return true;
+  if (checkForUnauthorized()) {
+    console.log(`❌ منع وصول في ${stepName}`);
+    const frToSave = fr || currentFR;
+    if (frToSave) await updateFRData(frToSave, { message: "SUCCESS", retryCount: 0 });
+    pageClosed = true;
+    await delay(500);
+    await closeTabSafely();
+    return true;
+  }
+  return false;
 }
 
 function createTimer() {
-const el = document.createElement('div');
-el.id = 'global-timer';
-
-el.style = `
-position: fixed;
-top: 10px;
-left: 10px;
-background: black;
-color: lime;
-padding: 8px 12px;
-font-size: 14px;
-z-index: 999999;
-border-radius: 6px;
-font-family: monospace;
-`;
-
-document.body.appendChild(el);
-
-const start = performance.now();
-
-setInterval(() => {
-const sec = ((performance.now() - start) / 1000).toFixed(2);
-el.innerText = `⏱ ${sec}s`;
-}, 100);
+  const el = document.createElement('div');
+  el.id = 'global-timer';
+  el.style = `
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    background: black;
+    color: lime;
+    padding: 8px 12px;
+    font-size: 14px;
+    z-index: 999999;
+    border-radius: 6px;
+    font-family: monospace;
+  `;
+  document.body.appendChild(el);
+  const start = performance.now();
+  setInterval(() => {
+    const sec = ((performance.now() - start) / 1000).toFixed(2);
+    el.innerText = `⏱ ${sec}s`;
+  }, 100);
 }
 
 // ========================
@@ -201,144 +160,143 @@ el.innerText = `⏱ ${sec}s`;
 // ========================
 
 async function step2_clickLoadSamePiece() {
-try {
-const timeout = 6000;
-const interval = 400;
+  try {
+    const timeout = 6000;
+    const interval = 400;
 
-console.log('⏳ انتظار زر Step2 أو Step3...');
+    console.log('⏳ انتظار زر Step2 أو Step3...');
 
-let processBtn = null;
-let loadBtn = null;
+    for (let elapsed = 0; elapsed < timeout; elapsed += interval) {
+      if (await checkAndCloseIfUnauthorized('Step2 wait', currentFR)) return false;
 
-for (let elapsed = 0; elapsed < timeout; elapsed += interval) {
-if (await checkAndCloseIfUnauthorized('Step2 wait', currentFR)) return false;
+      const loadBtn = [...document.querySelectorAll('button')]
+        .find(b => b.textContent?.trim() === 'تحميل الطلبات على نفس القطعة');
 
-loadBtn = [...document.querySelectorAll('button')]
-.find(b => b.textContent?.trim() === 'تحميل الطلبات على نفس القطعة');
+      const processBtn = [...document.querySelectorAll('button')]
+        .find(b => b.textContent?.trim() === 'المعالجة');
 
-processBtn = [...document.querySelectorAll('button')]
-.find(b => b.textContent?.trim() === 'المعالجة');
+      if (loadBtn) {
+        console.log('✅ تم العثور على زر Step2');
+        loadBtn.click();
+        await delay(250);
+        return true;
+      }
 
-if (loadBtn) {
-console.log('✅ تم العثور على زر Step2');
-loadBtn.click();
-await delay(250);
-return true;
-}
+      if (processBtn) {
+        console.log('⏭️ تخطي Step2 → زر Step3 موجود');
+        return true;
+      }
 
-if (processBtn) {
-console.log('⏭️ تخطي Step2 → زر Step3 موجود');
-return true;
-}
+      await delay(interval);
+    }
 
-await delay(interval);
-}
+    console.log('✅ لا يوجد زر تحميل أو معالجة → اعتبر Success');
+    if (currentFR) {
+      await updateFRData(currentFR, {
+        message: "SUCCESS",
+        retryCount: 0,
+        status: "مكتمل - لا يحتاج معالجة"
+      });
+    }
 
-// لا يوجد زر تحميل ولا زر معالجة
-console.log('✅ لا يوجد زر تحميل أو معالجة → اعتبر Success');
+    await delay(500);
+    await closeTabSafely();
+    pageClosed = true;
+    return false;
 
-if (currentFR) {
-await updateFRData(currentFR, {
-message: "SUCCESS",
-retryCount: 0,
-status: "مكتمل - لا يحتاج معالجة"
-});
-}
-
-await delay(500);
-await closeTabSafely();
-pageClosed = true;
-return false;
-
-} catch (err) {
-console.error('❌ Step2 error:', err);
-return false;
-}
+  } catch (err) {
+    console.error('❌ Step2 error:', err);
+    return false;
+  }
 }
 
 // ========================
-// Step 3 - المعالجة مع تسجيل وقت البدء
+// Step 3 - المعالجة مع بدء حساب الوقت
 // ========================
 
 async function step3_clickProcess() {
-try {
-// تسجيل وقت بدء المعالجة
-processStartTime = Date.now();
-console.log(`⏱️ بدء معالجة الطلب ${currentFR} في ${new Date(processStartTime).toLocaleTimeString()}`);
+  try {
+    processStartTime = Date.now();
+    console.log(`⏱️ بدء معالجة الطلب ${currentFR} في ${new Date(processStartTime).toLocaleTimeString()}`);
 
-// البحث عن زر المعالجة
-const processBtn = [...document.querySelectorAll('button')]
-.find(b => b.textContent?.trim() === 'المعالجة');
+    const processBtn = [...document.querySelectorAll('button')]
+      .find(b => b.textContent?.trim() === 'المعالجة');
 
-if (processBtn) {
-console.log('✅ تم العثور على زر المعالجة');
-processBtn.click();
-console.log('✅ Step3 clicked');
-await checkAndCloseIfUnauthorized('Step3', currentFR);
-return true;
-}
+    if (processBtn) {
+      console.log('✅ تم العثور على زر المعالجة');
+      processBtn.click();
+      await checkAndCloseIfUnauthorized('Step3', currentFR);
+      return true;
+    }
 
-// إذا لم يوجد زر المعالجة، افحص المحدد البديل
-console.log('⚠️ لم يتم العثور على زر المعالجة، جاري فحص المحدد البديل');
+    const fallbackSelector = '#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div.mt-12 > div.flex.justify-between.items-center > div.flex.justify-between.items-center > div > div > button';
+    const fallbackBtn = document.querySelector(fallbackSelector);
 
-const fallbackSelector = '#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div.mt-12 > div.flex.justify-between.items-center > div.flex.justify-between.items-center > div > div > button';
-const fallbackBtn = document.querySelector(fallbackSelector);
+    if (fallbackBtn) {
+      console.log('✅ تم العثور على الزر البديل - استمرار العملية');
+      return true;
+    }
 
-if (fallbackBtn) {
-console.log('✅ تم العثور على الزر البديل - استمرار العملية');
-return true;
-}
+    console.log('✅ لا يوجد زر معالجة ولا زر بديل → اعتبر Success');
+    if (currentFR) {
+      await updateFRData(currentFR, {
+        message: "SUCCESS",
+        retryCount: 0,
+        status: "مكتمل - لا يحتاج معالجة"
+      });
+    }
 
-// إذا لم يوجد المحدد البديل، اعتبر Success وأغلق
-console.log('✅ لا يوجد زر معالجة ولا زر بديل → اعتبر Success');
+    await delay(500);
+    await closeTabSafely();
+    pageClosed = true;
+    return false;
 
-if (currentFR) {
-await updateFRData(currentFR, {
-message: "SUCCESS",
-retryCount: 0,
-status: "مكتمل - لا يحتاج معالجة"
-});
-}
-
-await delay(500);
-await closeTabSafely();
-pageClosed = true;
-return false;
-
-} catch (err) {
-console.error('❌ Step3 error:', err);
-return false;
-}
+  } catch (err) {
+    console.error('❌ Step3 error:', err);
+    return false;
+  }
 }
 
 // ========================
-// Step 4 - الأسهم (التوقف عند اختفاء السهم)
+// Step 4 - الأسهم (بدون سكرول)
 // ========================
 
-async function step4_clickArrow7Times(clicks = 10, baseInterval = 350) {
-console.log(`🛠️ Step4: بدء الضغط على الأسهم (الحد الأقصى ${clicks} مرات)`);
+async function step4_clickArrowFast(maxClicks = 6, interval = 120) {
+  console.log(`🔎 البدء بالنقر على الأسهم (بحد أقصى ${maxClicks} نقرات)...`);
+  let clicked = 0;
+  let emptyRetries = 0;
 
-let clickedCount = 0;
-for (let i = 1; i <= clicks; i++) {
-if (await checkAndCloseIfUnauthorized(`Step4 before ${i}`, currentFR)) return;
+  while (clicked < maxClicks) {
+    if (await checkAndCloseIfUnauthorized(`Step4 click ${clicked}`, currentFR)) return;
 
-const btn = document.querySelector('button img[src$="left.svg"]')?.closest('button');
+    const img = document.querySelector('button img[src$="left.svg"]');
+    if (!img) {
+      emptyRetries++;
+      if (emptyRetries >= 3) {
+        console.log("✅ اختفى السهم تماماً - الانتقال للخطوة التالية");
+        break;
+      }
+      await delay(250);
+      continue;
+    }
 
-if (!btn) {
-console.log(`✅ لا يوجد سهم إضافي (الضغط ${i}/${clicks}) - الانتقال للخطوة التالية`);
-break;
-}
+    emptyRetries = 0;
+    const btn = img.closest("button");
 
-btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-clickedCount++;
-console.log(`🔘 Arrow ${clickedCount}/${clicks} ✅`);
+    if (btn) {
+      try {
+        btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+        clicked++;
+        console.log(`🔘 Arrow click ${clicked}/${maxClicks} ✅`);
+      } catch (e) {
+        console.error("❌ Click error:", e);
+      }
+    }
 
-await delay(Math.max(120, baseInterval));
+    await delay(interval);
+  }
 
-if (await checkAndCloseIfUnauthorized(`Step4 after ${i}`, currentFR)) return;
-}
-
-console.log(`✅ Step4 done - تم الضغط ${clickedCount} مرات`);
+  console.log(`✅ انتهى الضغط على الأسهم (${clicked} نقرة)`);
 }
 
 // ========================
@@ -346,93 +304,50 @@ console.log(`✅ Step4 done - تم الضغط ${clickedCount} مرات`);
 // ========================
 
 function pressKey(el, key) {
-el.dispatchEvent(new KeyboardEvent('keydown', {
-key,
-code: key,
-bubbles: true
-}));
+  el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true }));
 }
 
 async function selectBothMenusFast() {
-try {
-console.log('🚀 Step5: بدء اختيار القوائم (keyboard mode)');
+  try {
+    console.log('🚀 Step5: بدء اختيار القوائم');
+    const dropdowns = document.querySelectorAll('.drop-down-box.css-b62m3t-container');
+    if (!dropdowns.length) throw new Error('❌ لم يتم العثور على القوائم');
 
-const dropdowns = document.querySelectorAll('.drop-down-box.css-b62m3t-container');
+    // القائمة الأولى
+    const actionMenu = dropdowns[0];
+    const control = actionMenu.querySelector('input, [role="combobox"], .css-8mjqw9-control');
+    if (!control) throw new Error('❌ control غير موجود');
 
-if (!dropdowns.length) {
-throw new Error('❌ لم يتم العثور على القوائم');
-}
+    control.focus();
+    await delay(60);
+    pressKey(control, 'ArrowDown');
+    await delay(60);
+    pressKey(control, 'Enter');
+    console.log('✅ Step5: اختيار -> تعيين الطلب للمشرف الجيومكاني');
 
-console.log(`📦 Step5: عدد القوائم = ${dropdowns.length}`);
+    await delay(400);
 
-// =========================
-// القائمة الأولى (Keyboard)
-// =========================
-const actionMenu = dropdowns[0];
+    // القائمة الثانية
+    const arrow = document.querySelector('svg.css-8mmkcg');
+    if (!arrow) throw new Error('❌ سهم القائمة الثانية غير موجود');
 
-actionMenu.style.outline = '4px solid red';
+    const parent = arrow.closest('div, button, span') || arrow;
+    parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    parent.click();
 
-console.log('🎯 Step5: فتح القائمة الأولى');
+    await delay(250);
 
-const control =
-actionMenu.querySelector('input, [role="combobox"], .css-8mjqw9-control');
+    const options = [...document.querySelectorAll('[id*="react-select"][id*="option"]')];
+    if (!options.length) throw new Error('❌ لا توجد خيارات في القائمة الثانية');
 
-if (!control) throw new Error('❌ control غير موجود');
+    const first = options[0];
+    first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    first.click();
+    console.log('✅ Step5: تم اختيار أول مشرف بنجاح');
 
-control.focus();
-await delay(60);
-pressKey(control, 'ArrowDown');
-await delay(60);
-pressKey(control, 'Enter');
-console.log('✅ Step5: اختيار -> تعيين الطلب للمشرف الجيومكاني');
-
-await delay(400);
-
-// =========================
-// القائمة الثانية (SVG)
-// =========================
-console.log('🚀 Step5: فتح القائمة الثانية (SVG)');
-
-const arrow = document.querySelector('svg.css-8mmkcg');
-
-if (!arrow) {
-throw new Error('❌ سهم القائمة الثانية غير موجود');
-}
-
-const parent = arrow.closest('div, button, span') || arrow;
-
-parent.style.outline = '3px solid red';
-
-parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-parent.click();
-
-await delay(250);
-
-console.log('📂 Step5: تم فتح القائمة الثانية');
-
-// =========================
-// اختيار أول خيار
-// =========================
-const options = [...document.querySelectorAll('[id*="react-select"][id*="option"]')];
-
-console.log(`📋 Step5: عدد الخيارات = ${options.length}`);
-
-if (!options.length) throw new Error('❌ لا توجد خيارات في القائمة الثانية');
-
-const first = options[0];
-
-first.style.outline = '3px solid red';
-
-console.log('🎯 Step5: اختيار أول خيار ->', first.innerText.trim());
-
-first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-first.click();
-
-console.log('✅ Step5: تم الاختيار بنجاح');
-
-} catch (err) {
-console.error('❌ Step5 error:', err);
-}
+  } catch (err) {
+    console.error('❌ Step5 error:', err);
+  }
 }
 
 // ========================
@@ -440,171 +355,141 @@ console.error('❌ Step5 error:', err);
 // ========================
 
 async function step6_clickFinalButton() {
-try {
+  try {
+    if (await checkAndCloseIfUnauthorized('Step6 before search', currentFR)) return;
 
-if (await checkAndCloseIfUnauthorized('Step6 before search', currentFR))
-return;
+    const btn = [...document.querySelectorAll('button')]
+      .find(b => b.textContent?.trim() === 'المتابعة');
 
-const btn = [...document.querySelectorAll('button')]
-.find(b => b.textContent?.trim() === 'المتابعة');
+    if (!btn) throw new Error('زر المتابعة غير موجود');
 
-if (!btn)
-throw new Error('زر المتابعة غير موجود');
+    btn.click();
+    console.log('✅ Step6 clicked (المتابعة)');
+    await checkAndCloseIfUnauthorized('Step6 after', currentFR);
 
-console.log('✅ تم العثور على زر المتابعة');
-
-if (await checkAndCloseIfUnauthorized('Step6 before click', currentFR))
-return;
-
-btn.click();
-
-console.log('✅ Step6 clicked');
-
-await checkAndCloseIfUnauthorized('Step6 after', currentFR);
-
-} catch (err) {
-console.error('❌ Step6 error:', err);
-}
+  } catch (err) {
+    console.error('❌ Step6 error:', err);
+  }
 }
 
 // ========================
-// Step 7 - انتظار النتيجة وإغلاق التبويب
+// Step 7 - انتظار تغير الرابط واعتماد النجاح
 // ========================
 
-async function step7_closeTab() {
-try {
-console.log('🛑 Waiting for success...');
-const target = 'تم تقديم الطلب';
-const timeout = SUCCESS_TIMEOUT;
-const baseInterval = 300;
-const start = Date.now();
-let detected = false;
+async function step7_waitForRedirectAndClose() {
+  try {
+    console.log('🛑 بانتظار تحويل الصفحة واعتماد النجاح...');
+    const startUrl = window.location.href;
+    const start = Date.now();
+    let isRedirected = false;
 
-// استخراج FR من الصفحة الحالية إذا لم يكن موجوداً
-if (!currentFR) {
-currentFR = extractFR();
-}
+    if (!currentFR) currentFR = extractFR();
+    const frValue = currentFR;
 
-const frValue = currentFR;
+    while (Date.now() - start < SUCCESS_TIMEOUT && !pageClosed) {
+      if (await checkAndCloseIfUnauthorized('Step7 wait redirect', frValue)) return;
 
-while (Date.now() - start < timeout && !pageClosed) {
-const paras = document.querySelectorAll('p');
-for (const p of paras) {
-if (p.textContent.trim() === target) { detected = true; break; }
-}
+      const currentUrl = window.location.href;
 
-if (await checkAndCloseIfUnauthorized('Step7 wait', frValue)) return;
+      // تحقق من تغير الرابط أو الخروج من صفحة تفاصيل الطلب
+      const leftCasePage = !currentUrl.includes('case-view') && !currentUrl.includes('deed-upgrade-case-view');
+      const urlChanged = currentUrl !== startUrl;
 
-if (detected) break;
+      if (leftCasePage || urlChanged) {
+        isRedirected = true;
+        console.log(`🔀 تم الانتقال للصفحة الرئيسية: ${currentUrl}`);
+        break;
+      }
 
-await delay(baseInterval);
-}
+      await delay(300);
+    }
 
-if (pageClosed) return;
-if (!frValue) { console.warn("FR not found"); return; }
+    if (pageClosed) return;
+    if (!frValue) {
+      console.warn("❌ لم يتم تحديد رقم الطلب");
+      await closeTabSafely();
+      return;
+    }
 
-const current = await getFRData(frValue);
-const retryCount = current?.retryCount || 0;
+    const current = await getFRData(frValue);
+    const retryCount = current?.retryCount || 0;
 
-if (detected) {
-console.log("✅ SUCCESS");
-await updateFRData(frValue, {
-message: "SUCCESS",
-retryCount: 0
-});
-} else {
-console.warn("❌ FAILED");
+    if (isRedirected) {
+      console.log(`✅ SUCCESS - اكتملت معالجة الطلب ${frValue}`);
+      await updateFRData(frValue, {
+        message: "SUCCESS",
+        retryCount: 0
+      });
+    } else {
+      console.warn("❌ FAILED - لم يتم تحويل الرابط في الوقت المحدد");
 
-const statusElement = document.querySelector('[class*="status"], [class*="حالة"], .bg-\\#BF524D1A, .bg-lightBlue');
-const statusText = statusElement?.textContent?.trim() || '';
+      const statusElement = document.querySelector('[class*="status"], [class*="حالة"], .bg-\\#BF524D1A, .bg-lightBlue');
+      const statusText = statusElement?.textContent?.trim() || '';
 
-const isReturnedFromClient = statusText.includes('معادة من العميل');
+      if (statusText.includes('معادة من العميل')) {
+        console.warn(`⚠️ ${frValue} طلب معاد من العميل`);
+        await updateFRData(frValue, {
+          status: statusText,
+          message: "CLIENT_RETURN_FAILED",
+          flag: "⚠️",
+          retryCount: 0
+        });
+      } else if (retryCount < MAX_RETRIES) {
+        await updateFRData(frValue, {
+          message: "PENDING",
+          retryCount: retryCount + 1
+        });
+        if (chrome?.runtime) {
+          chrome.runtime.sendMessage({ action: "retryFR", fr: frValue, delay: 5000 });
+        }
+      } else {
+        await updateFRData(frValue, {
+          message: "FAILED",
+          retryCount
+        });
+      }
+    }
 
-if (isReturnedFromClient) {
-console.warn(`⚠️ ${frValue} فشل وهو معاد من العميل`);
-await updateFRData(frValue, {
-status: statusText,
-message: "CLIENT_RETURN_FAILED",
-flag: "⚠️",
-retryCount: 0
-});
-} else if (retryCount < MAX_RETRIES) {
-await updateFRData(frValue, {
-message: "PENDING",
-retryCount: retryCount + 1
-});
-if (chrome?.runtime)
-chrome.runtime.sendMessage({ action: "retryFR", fr: frValue, delay: 5000 });
-else
-setTimeout(() => window.open(`https://ops.rer.sa/?q=${frValue}+&filteredGraph=all`), 5000);
-} else {
-await updateFRData(frValue, {
-message: "FAILED",
-retryCount
-});
-}
-}
+    await delay(500);
+    await closeTabSafely();
 
-await delay(500);
-
-if (chrome?.runtime)
-chrome.runtime.sendMessage({ action: "closeTab" });
-else
-window.close();
-
-} catch (err) {
-console.error('❌ Step7 error:', err);
-}
+  } catch (err) {
+    console.error('❌ Step7 error:', err);
+  }
 }
 
 // ========================
-// Master runner - بدون Step0، بدون سرعات، بدون OTP
+// المحرك الرئيسي
 // ========================
 
 async function runProcess() {
-// استخراج FR من الصفحة الحالية
-currentFR = extractFR();
-console.log(`📌 FR الحالي: ${currentFR}`);
+  currentFR = extractFR();
+  console.log(`📌 الطلب الحالي: ${currentFR}`);
 
-// if (!currentFR) {
-//     console.warn('⚠️ لم يتم العثور على FR، استمرار العملية');
-// }
+  const step2Success = await step2_clickLoadSamePiece();
+  if (pageClosed || !step2Success) return;
 
-console.log('🚀 بدء من Step2 مباشرة');
+  const step3Success = await step3_clickProcess();
+  if (pageClosed || !step3Success) return;
 
-const step2Success = await step2_clickLoadSamePiece();
+  await delay(200);
 
-if (pageClosed || !step2Success) {
-console.log('⏹️ توقف العملية بعد Step2');
-return;
-}
+  // تشغيل الأسهم بالنظام السريع وبدون سكرول
+  await step4_clickArrowFast(6, 120);
+  if (pageClosed) return;
 
-const step3Success = await step3_clickProcess();
+  await delay(400);
 
-if (pageClosed || !step3Success) {
-console.log('⏹️ توقف العملية بعد Step3');
-return;
-}
+  await selectBothMenusFast();
+  if (pageClosed) return;
 
-await delay(200);
+  await delay(300);
 
-await step4_clickArrow7Times(10, 500);
+  await step6_clickFinalButton();
+  if (pageClosed) return;
 
-if (pageClosed) return;
-
-await delay(500);
-
-await selectBothMenusFast();
-
-if (pageClosed) return;
-
-await delay(300);
-
-await step6_clickFinalButton();
-
-if (pageClosed) return;
-
-await step7_closeTab();
+  // فحص التحويل والإغلاق
+  await step7_waitForRedirectAndClose();
 }
 
 // ========================
@@ -612,309 +497,26 @@ await step7_closeTab();
 // ========================
 
 (async () => {
-console.log('🚀 بدء تشغيل المنصة - بدون Step0، بدون سرعات، بدون OTP');
+  createTimer();
 
-createTimer(); // ⏱️
+  if (checkForUnauthorized()) {
+    console.log('❌ منع وصول في البداية');
+    const frToSave = currentFR || extractFR();
+    if (frToSave) await updateFRData(frToSave, { message: "SUCCESS", retryCount: 0 });
+    await delay(500);
+    await closeTabSafely();
+    return;
+  }
 
-console.log('⏳ وقت الانتظار الأقصى:', LONG_TIMEOUT/1000, 'ثانية');
+  runProcess();
 
-// التحقق من الصلاحية
-if (checkForUnauthorized()) {
-console.log('❌ منع وصول في البداية');
-const frToSave = currentFR || extractFR();
-if (frToSave) await updateFRData(frToSave, { message: "SUCCESS", retryCount: 0 });
-await delay(500);
-await closeTabSafely();
-return;
-}
-
-runProcess();
-
-setInterval(async () => {
-if (checkForUnauthorized()) {
-console.log('❌ منع وصول - إعادة تحميل');
-location.reload();
-}
-}, 2000);
-
+  setInterval(async () => {
+    if (checkForUnauthorized()) {
+      console.log('❌ منع وصول - إعادة تحميل');
+      location.reload();
+    }
+  }, 2000);
 })();
 
 window.showSharedFile = () => { if (chrome?.storage) chrome.storage.local.get('fr_database', r => console.log(r)); };
 window.clearSharedFile = () => { if (chrome?.storage) chrome.storage.local.remove('fr_database', () => console.log('🗑️ Cleared')); };
-
-
-
-
-
-
-
-
-
-// ========================
-// background.js
-// ========================
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === "closeTab" && sender.tab) {
-    chrome.tabs.remove(sender.tab.id);
-  }
-  else if (message.action === "openUrlInBackground") {
-    chrome.tabs.create({ url: message.url, active: false });
-  }
-  else if (message.action === "retryFR") {
-    setTimeout(() => {
-      const url = `https://ops.rer.sa/?q=${encodeURIComponent(message.fr)}+&filteredGraph=all`;
-      chrome.tabs.create({ url, active: false });
-    }, message.delay || 5000);
-  }
-});
-
-
-
-
-
-
-
-
-
-{
-  "manifest_version": 3,
-  "name": "Bot3.0",
-  "description": "transfer cases every where.",
-  "version": "1.0",
-  "permissions": [
-    "storage"
-  ],
-  "host_permissions": [
-    "https://teams.cloud.microsoft/*",
-    "https://ops.rer.sa/*",
-    "https://ops-sso.rer.sa/*"
-  ],
-  "background": {
-    "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["https://teams.cloud.microsoft/*"],
-      "js": ["teams-content.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://ops.rer.sa/*"],
-      "js": ["platform-content.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://ops-sso.rer.sa/*"],
-      "js": ["platform-content.js"],
-      "run_at": "document_idle"
-    }
-  ]
-}
-
-
-
-
-
-بالنسبة لخطوة الانتقال بالاسهم ممكن نستخدم دي:
-// ========================
-// Arrow Auto Click Extension
-// ========================
-
-console.log("🟢 Arrow extension loaded:", location.href);
-
-
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-
-// ========================
-// Settings
-// ========================
-
-const MAX_CLICKS = 6;
-const CLICK_INTERVAL = 100;
-
-const SCROLL_TIMES = 3;
-const SCROLL_INTERVAL = 500;
-
-
-
-// ========================
-// Scroll Function
-// ========================
-
-async function scrollToBottomRepeated(times = SCROLL_TIMES, interval = SCROLL_INTERVAL) {
-
-    console.log("⬇️ Starting scroll process");
-
-
-    for (let i = 1; i <= times; i++) {
-
-
-        const heightBefore = document.body.scrollHeight;
-
-
-        window.scrollTo({
-            top: heightBefore,
-            behavior: "smooth"
-        });
-
-
-        console.log(
-            `⬇️ Scroll ${i}/${times} - Height: ${heightBefore}px`
-        );
-
-
-        await delay(interval);
-
-
-        const heightAfter = document.body.scrollHeight;
-
-
-        if (heightAfter !== heightBefore) {
-
-            console.log(
-                `📈 Page height changed: ${heightBefore} → ${heightAfter}`
-            );
-
-        }
-
-    }
-
-
-    console.log(
-        "✅ Scroll completed"
-    );
-
-}
-
-
-
-// ========================
-// Arrow Click Function
-// ========================
-
-async function clickArrow() {
-
-
-    console.log(
-        "🔎 Searching arrow button..."
-    );
-
-
-    let clicked = 0;
-
-
-
-    while (clicked < MAX_CLICKS) {
-
-
-        const img = document.querySelector(
-            'button img[src$="left.svg"]'
-        );
-
-
-
-        if (!img) {
-
-            console.log(
-                "⏳ Arrow not found, waiting..."
-            );
-
-            await delay(500);
-
-            continue;
-        }
-
-
-
-        const btn = img.closest("button");
-
-
-
-        if (!btn) {
-
-            console.warn(
-                "⚠️ Arrow image found but button missing"
-            );
-
-            await delay(500);
-
-            continue;
-        }
-
-
-
-        console.log(
-            "✅ Arrow button found",
-            btn
-        );
-
-
-
-        try {
-
-
-            btn.dispatchEvent(
-                new MouseEvent(
-                    "click",
-                    {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window
-                    }
-                )
-            );
-
-
-            clicked++;
-
-
-            console.log(
-                `🔘 Arrow click ${clicked}/${MAX_CLICKS}`
-            );
-
-
-
-        } catch(error) {
-
-
-            console.error(
-                "❌ Click error:",
-                error
-            );
-
-        }
-
-
-
-        await delay(
-            CLICK_INTERVAL
-        );
-
-    }
-
-
-
-    console.log(
-        "✅ Arrow clicks finished"
-    );
-
-
-    await delay(500);
-
-
-    await scrollToBottomRepeated();
-
-}
-
-
-
-// ========================
-// Start
-// ========================
-
-clickArrow();
-
-
