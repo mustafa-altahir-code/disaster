@@ -1,6 +1,712 @@
-Selector: .cursor-pointerTag: divJavaScript Path: document.body.children[0].children[0].children[2].children[0].children[6].children[2].children[0].children[5]XPath: /html[1]/body[1]/div[1]/div[1]/div[2]/div[1]/div[6]/div[3]/div[1]/div[6]Attributes: class="cursor-pointer"Bounding Box: top: 415px, left: 429.3958435058594px, width: 46px, height: 70pxOuter HTML:<div class="cursor-pointer"><div class="flex items-center "><img src="/assets/svgs/stepperUnChecked.svg" alt=""></div><div class=""><p class="uppercase text-[10px] leading-3 mt-3 text-right text-tertiary">المراجعة</p></div></div>Inner HTML:<div class="flex items-center "><img src="/assets/svgs/stepperUnChecked.svg" alt=""></div><div class=""><p class="uppercase text-[10px] leading-3 mt-3 text-right text-tertiary">المراجعة</p></div>Text Content:المراجعة
-Selector: .flex.text-textPrimary.p-3.rounded.border.border-textPrimary.bg-white.text-[14px].leading-5.font-[500]Tag: buttonJavaScript Path: document.body.children[0].children[0].children[2].children[0].children[6].children[8].children[0]XPath: /html[1]/body[1]/div[1]/div[1]/div[2]/div[1]/div[6]/div[8]/button[1]Attributes: class="  flex text-textPrimary p-3 rounded border border-textPrimary bg-white   text-[14px] leading-5  font-[500]"Bounding Box: top: 1070.5px, left: 220.6666717529297px, width: 49.66666793823242px, height: 51.208335876464844pxOuter HTML:<button class="  flex text-textPrimary p-3 rounded border border-textPrimary bg-white   text-[14px] leading-5  font-[500]"><img class="mx-1 w-[15px]" src="/assets/left.svg" alt="icon"> </button>Inner HTML:<img class="mx-1 w-[15px]" src="/assets/left.svg" alt="icon">Text Content:
+// ========================
+// platform-content.js - النسخة النهائية (بدون Step0، بدون سرعات، بدون OTP)
+// ========================
+
+// ========================
+// الثوابت الأخرى
+// ========================
+
+const MAX_RETRIES = 1;
+const SUCCESS_TIMEOUT = 8000;
+const LONG_TIMEOUT = 20000; // 20 ثانية
+let currentFR = null;
+let pageClosed = false;
+let processStartTime = null; // وقت بدء معالجة الطلب
+
+// ========================
+// دوال مساعدة
+// ========================
+
+function extractFR() {
+try {
+// محاولة استخراج FR من الصفحة الحالية
+const frElement = document.querySelector('#__next span.uppercase, [class*="fr"], [class*="FR"], .font-mono, code');
+if (frElement) {
+const frMatch = frElement.textContent?.match(/FR\d+/i);
+if (frMatch) {
+return frMatch[0].toLowerCase();
+}
+}
+
+// محاولة من URL
+const urlMatch = window.location.href.match(/FR\d+/i);
+if (urlMatch) {
+return urlMatch[0].toLowerCase();
+}
+
+return null;
+} catch (err) {
+console.error('❌ Error extracting FR:', err);
+return null;
+}
+}
+
+function updateFRData(fr, updates) {
+return new Promise((resolve) => {
+if (!fr || !fr.startsWith("fr")) { console.warn("❌ Invalid FR"); return resolve(); }
+const frLower = fr.toLowerCase();
+
+// إذا كان التحديث يحتوي على message (SUCCESS/FAILED) وكان لدينا وقت بدء
+if ((updates.message === 'SUCCESS' || updates.message === 'FAILED' || updates.message === 'CLIENT_RETURN_FAILED') && processStartTime) {
+const processingTime = Math.floor((Date.now() - processStartTime) / 1000);
+updates.processingTime = processingTime;
+updates.processingTimeFormatted = formatProcessingTime(processingTime);
+console.log(`⏱️ زمن المعالجة لـ ${frLower}: ${updates.processingTimeFormatted}`);
+}
+
+if (typeof chrome !== 'undefined' && chrome.storage) {
+chrome.storage.local.get(['fr_database'], (result) => {
+let db = result.fr_database || { frs: {} };
+db.frs[frLower] = { ...db.frs[frLower], fr: frLower, ...updates, timestamp: new Date().toLocaleString() };
+db.lastUpdate = new Date().toISOString();
+chrome.storage.local.set({ fr_database: db }, () => {
+console.log(`💾 تم تحديث ${frLower}`, updates);
+resolve();
+});
+});
+} else {
+const key = `FR_${frLower}`;
+const existing = JSON.parse(localStorage.getItem(key) || '{}');
+localStorage.setItem(key, JSON.stringify({ ...existing, ...updates, timestamp: new Date().toLocaleString() }));
+resolve();
+}
+});
+}
+
+// دالة تنسيق زمن المعالجة
+function formatProcessingTime(seconds) {
+if (seconds < 60) {
+return `${seconds}ث`;
+} else {
+const minutes = Math.floor(seconds / 60);
+const remainingSeconds = seconds % 60;
+return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}د`;
+}
+}
+
+function getFRData(fr) {
+return new Promise((resolve) => {
+const frLower = fr.toLowerCase();
+if (typeof chrome !== 'undefined' && chrome.storage) {
+chrome.storage.local.get(['fr_database'], (result) => {
+resolve(result.fr_database?.frs?.[frLower] || null);
+});
+} else {
+const key = `FR_${frLower}`;
+const data = localStorage.getItem(key);
+resolve(data ? JSON.parse(data) : null);
+}
+});
+}
+
+// دالة انتظار العناصر
+function waitForElement(selector, timeout = LONG_TIMEOUT) {
+return new Promise((resolve) => {
+const startTime = Date.now();
+const interval = setInterval(() => {
+const el = document.querySelector(selector);
+if (el) {
+clearInterval(interval);
+resolve(el);
+} else if (Date.now() - startTime > timeout) {
+clearInterval(interval);
+console.warn(`⚠️ لم يتم العثور على "${selector}" بعد ${timeout}ms`);
+resolve(null);
+}
+}, 300);
+});
+}
+
+function delay(ms) {
+return new Promise(res => setTimeout(res, ms));
+}
+
+function checkForUnauthorized() {
+const bodyText = document.body.innerText || '';
+const htmlText = document.body.innerHTML || '';
+const accessDeniedBox = document.querySelector('.flex.justify-between.w-full.p-5');
+const keywords = [
+'غير مصرح',
+'الصلاحية',
+'Authorized',
+'You are not authorized to claim the case',
+'ليس لديك صلاحية',
+'لا تملك الصلاحية',
+'رفض الوصول',
+'تم رفض الوصول',
+'403 Forbidden',
+'Access Denied'
+];
+
+const hasAccessDeniedBox = [...document.querySelectorAll('p')]
+.some(p => p.textContent.trim() === 'تم رفض الوصول');
+
+return (
+keywords.some(k => bodyText.includes(k) || htmlText.includes(k))
+|| hasAccessDeniedBox
+);
+}
+
+async function closeTabSafely() {
+try {
+if (typeof chrome !== 'undefined' && chrome.runtime) chrome.runtime.sendMessage({ action: "closeTab" });
+else window.close();
+setTimeout(() => { if (!pageClosed) window.close(); }, 500);
+} catch (e) { window.close(); }
+}
+
+async function checkAndCloseIfUnauthorized(stepName = '', fr = null) {
+if (pageClosed) return true;
+if (checkForUnauthorized()) {
+console.log(`❌ منع وصول في ${stepName}`);
+const frToSave = fr || currentFR;
+if (frToSave) await updateFRData(frToSave, { message: "SUCCESS", retryCount: 0 });
+pageClosed = true;
+await delay(500);
+await closeTabSafely();
+return true;
+}
+return false;
+}
+
+function createTimer() {
+const el = document.createElement('div');
+el.id = 'global-timer';
+
+el.style = `
+position: fixed;
+top: 10px;
+left: 10px;
+background: black;
+color: lime;
+padding: 8px 12px;
+font-size: 14px;
+z-index: 999999;
+border-radius: 6px;
+font-family: monospace;
+`;
+
+document.body.appendChild(el);
+
+const start = performance.now();
+
+setInterval(() => {
+const sec = ((performance.now() - start) / 1000).toFixed(2);
+el.innerText = `⏱ ${sec}s`;
+}, 100);
+}
+
+// ========================
+// Step 2 - تحميل الطلبات على نفس القطعة
+// ========================
+
+async function step2_clickLoadSamePiece() {
+try {
+const timeout = 6000;
+const interval = 400;
+
+console.log('⏳ انتظار زر Step2 أو Step3...');
+
+let processBtn = null;
+let loadBtn = null;
+
+for (let elapsed = 0; elapsed < timeout; elapsed += interval) {
+if (await checkAndCloseIfUnauthorized('Step2 wait', currentFR)) return false;
+
+loadBtn = [...document.querySelectorAll('button')]
+.find(b => b.textContent?.trim() === 'تحميل الطلبات على نفس القطعة');
+
+processBtn = [...document.querySelectorAll('button')]
+.find(b => b.textContent?.trim() === 'المعالجة');
+
+if (loadBtn) {
+console.log('✅ تم العثور على زر Step2');
+loadBtn.click();
+await delay(250);
+return true;
+}
+
+if (processBtn) {
+console.log('⏭️ تخطي Step2 → زر Step3 موجود');
+return true;
+}
+
+await delay(interval);
+}
+
+// لا يوجد زر تحميل ولا زر معالجة
+console.log('✅ لا يوجد زر تحميل أو معالجة → اعتبر Success');
+
+if (currentFR) {
+await updateFRData(currentFR, {
+message: "SUCCESS",
+retryCount: 0,
+status: "مكتمل - لا يحتاج معالجة"
+});
+}
+
+await delay(500);
+await closeTabSafely();
+pageClosed = true;
+return false;
+
+} catch (err) {
+console.error('❌ Step2 error:', err);
+return false;
+}
+}
+
+// ========================
+// Step 3 - المعالجة مع تسجيل وقت البدء
+// ========================
+
+async function step3_clickProcess() {
+try {
+// تسجيل وقت بدء المعالجة
+processStartTime = Date.now();
+console.log(`⏱️ بدء معالجة الطلب ${currentFR} في ${new Date(processStartTime).toLocaleTimeString()}`);
+
+// البحث عن زر المعالجة
+const processBtn = [...document.querySelectorAll('button')]
+.find(b => b.textContent?.trim() === 'المعالجة');
+
+if (processBtn) {
+console.log('✅ تم العثور على زر المعالجة');
+processBtn.click();
+console.log('✅ Step3 clicked');
+await checkAndCloseIfUnauthorized('Step3', currentFR);
+return true;
+}
+
+// إذا لم يوجد زر المعالجة، افحص المحدد البديل
+console.log('⚠️ لم يتم العثور على زر المعالجة، جاري فحص المحدد البديل');
+
+const fallbackSelector = '#__next > div > div.w-full.p-8.transition-all.duration-700 > div > div.mt-12 > div.flex.justify-between.items-center > div.flex.justify-between.items-center > div > div > button';
+const fallbackBtn = document.querySelector(fallbackSelector);
+
+if (fallbackBtn) {
+console.log('✅ تم العثور على الزر البديل - استمرار العملية');
+return true;
+}
+
+// إذا لم يوجد المحدد البديل، اعتبر Success وأغلق
+console.log('✅ لا يوجد زر معالجة ولا زر بديل → اعتبر Success');
+
+if (currentFR) {
+await updateFRData(currentFR, {
+message: "SUCCESS",
+retryCount: 0,
+status: "مكتمل - لا يحتاج معالجة"
+});
+}
+
+await delay(500);
+await closeTabSafely();
+pageClosed = true;
+return false;
+
+} catch (err) {
+console.error('❌ Step3 error:', err);
+return false;
+}
+}
+
+// ========================
+// Step 4 - الأسهم (التوقف عند اختفاء السهم)
+// ========================
+
+async function step4_clickArrow7Times(clicks = 10, baseInterval = 350) {
+console.log(`🛠️ Step4: بدء الضغط على الأسهم (الحد الأقصى ${clicks} مرات)`);
+
+let clickedCount = 0;
+for (let i = 1; i <= clicks; i++) {
+if (await checkAndCloseIfUnauthorized(`Step4 before ${i}`, currentFR)) return;
+
+const btn = document.querySelector('button img[src$="left.svg"]')?.closest('button');
+
+if (!btn) {
+console.log(`✅ لا يوجد سهم إضافي (الضغط ${i}/${clicks}) - الانتقال للخطوة التالية`);
+break;
+}
+
+btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+clickedCount++;
+console.log(`🔘 Arrow ${clickedCount}/${clicks} ✅`);
+
+await delay(Math.max(120, baseInterval));
+
+if (await checkAndCloseIfUnauthorized(`Step4 after ${i}`, currentFR)) return;
+}
+
+console.log(`✅ Step4 done - تم الضغط ${clickedCount} مرات`);
+}
+
+// ========================
+// Step 5 - اختيار القوائم
+// ========================
+
+function pressKey(el, key) {
+el.dispatchEvent(new KeyboardEvent('keydown', {
+key,
+code: key,
+bubbles: true
+}));
+}
+
+async function selectBothMenusFast() {
+try {
+console.log('🚀 Step5: بدء اختيار القوائم (keyboard mode)');
+
+const dropdowns = document.querySelectorAll('.drop-down-box.css-b62m3t-container');
+
+if (!dropdowns.length) {
+throw new Error('❌ لم يتم العثور على القوائم');
+}
+
+console.log(`📦 Step5: عدد القوائم = ${dropdowns.length}`);
+
+// =========================
+// القائمة الأولى (Keyboard)
+// =========================
+const actionMenu = dropdowns[0];
+
+actionMenu.style.outline = '4px solid red';
+
+console.log('🎯 Step5: فتح القائمة الأولى');
+
+const control =
+actionMenu.querySelector('input, [role="combobox"], .css-8mjqw9-control');
+
+if (!control) throw new Error('❌ control غير موجود');
+
+control.focus();
+await delay(60);
+pressKey(control, 'ArrowDown');
+await delay(60);
+pressKey(control, 'Enter');
+console.log('✅ Step5: اختيار -> تعيين الطلب للمشرف الجيومكاني');
+
+await delay(400);
+
+// =========================
+// القائمة الثانية (SVG)
+// =========================
+console.log('🚀 Step5: فتح القائمة الثانية (SVG)');
+
+const arrow = document.querySelector('svg.css-8mmkcg');
+
+if (!arrow) {
+throw new Error('❌ سهم القائمة الثانية غير موجود');
+}
+
+const parent = arrow.closest('div, button, span') || arrow;
+
+parent.style.outline = '3px solid red';
+
+parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+parent.click();
+
+await delay(250);
+
+console.log('📂 Step5: تم فتح القائمة الثانية');
+
+// =========================
+// اختيار أول خيار
+// =========================
+const options = [...document.querySelectorAll('[id*="react-select"][id*="option"]')];
+
+console.log(`📋 Step5: عدد الخيارات = ${options.length}`);
+
+if (!options.length) throw new Error('❌ لا توجد خيارات في القائمة الثانية');
+
+const first = options[0];
+
+first.style.outline = '3px solid red';
+
+console.log('🎯 Step5: اختيار أول خيار ->', first.innerText.trim());
+
+first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+first.click();
+
+console.log('✅ Step5: تم الاختيار بنجاح');
+
+} catch (err) {
+console.error('❌ Step5 error:', err);
+}
+}
+
+// ========================
+// Step 6 - المتابعة
+// ========================
+
+async function step6_clickFinalButton() {
+try {
+
+if (await checkAndCloseIfUnauthorized('Step6 before search', currentFR))
+return;
+
+const btn = [...document.querySelectorAll('button')]
+.find(b => b.textContent?.trim() === 'المتابعة');
+
+if (!btn)
+throw new Error('زر المتابعة غير موجود');
+
+console.log('✅ تم العثور على زر المتابعة');
+
+if (await checkAndCloseIfUnauthorized('Step6 before click', currentFR))
+return;
+
+btn.click();
+
+console.log('✅ Step6 clicked');
+
+await checkAndCloseIfUnauthorized('Step6 after', currentFR);
+
+} catch (err) {
+console.error('❌ Step6 error:', err);
+}
+}
+
+// ========================
+// Step 7 - انتظار النتيجة وإغلاق التبويب
+// ========================
+
+async function step7_closeTab() {
+try {
+console.log('🛑 Waiting for success...');
+const target = 'تم تقديم الطلب';
+const timeout = SUCCESS_TIMEOUT;
+const baseInterval = 300;
+const start = Date.now();
+let detected = false;
+
+// استخراج FR من الصفحة الحالية إذا لم يكن موجوداً
+if (!currentFR) {
+currentFR = extractFR();
+}
+
+const frValue = currentFR;
+
+while (Date.now() - start < timeout && !pageClosed) {
+const paras = document.querySelectorAll('p');
+for (const p of paras) {
+if (p.textContent.trim() === target) { detected = true; break; }
+}
+
+if (await checkAndCloseIfUnauthorized('Step7 wait', frValue)) return;
+
+if (detected) break;
+
+await delay(baseInterval);
+}
+
+if (pageClosed) return;
+if (!frValue) { console.warn("FR not found"); return; }
+
+const current = await getFRData(frValue);
+const retryCount = current?.retryCount || 0;
+
+if (detected) {
+console.log("✅ SUCCESS");
+await updateFRData(frValue, {
+message: "SUCCESS",
+retryCount: 0
+});
+} else {
+console.warn("❌ FAILED");
+
+const statusElement = document.querySelector('[class*="status"], [class*="حالة"], .bg-\\#BF524D1A, .bg-lightBlue');
+const statusText = statusElement?.textContent?.trim() || '';
+
+const isReturnedFromClient = statusText.includes('معادة من العميل');
+
+if (isReturnedFromClient) {
+console.warn(`⚠️ ${frValue} فشل وهو معاد من العميل`);
+await updateFRData(frValue, {
+status: statusText,
+message: "CLIENT_RETURN_FAILED",
+flag: "⚠️",
+retryCount: 0
+});
+} else if (retryCount < MAX_RETRIES) {
+await updateFRData(frValue, {
+message: "PENDING",
+retryCount: retryCount + 1
+});
+if (chrome?.runtime)
+chrome.runtime.sendMessage({ action: "retryFR", fr: frValue, delay: 5000 });
+else
+setTimeout(() => window.open(`https://ops.rer.sa/?q=${frValue}+&filteredGraph=all`), 5000);
+} else {
+await updateFRData(frValue, {
+message: "FAILED",
+retryCount
+});
+}
+}
+
+await delay(500);
+
+if (chrome?.runtime)
+chrome.runtime.sendMessage({ action: "closeTab" });
+else
+window.close();
+
+} catch (err) {
+console.error('❌ Step7 error:', err);
+}
+}
+
+// ========================
+// Master runner - بدون Step0، بدون سرعات، بدون OTP
+// ========================
+
+async function runProcess() {
+// استخراج FR من الصفحة الحالية
+currentFR = extractFR();
+console.log(`📌 FR الحالي: ${currentFR}`);
+
+// if (!currentFR) {
+//     console.warn('⚠️ لم يتم العثور على FR، استمرار العملية');
+// }
+
+console.log('🚀 بدء من Step2 مباشرة');
+
+const step2Success = await step2_clickLoadSamePiece();
+
+if (pageClosed || !step2Success) {
+console.log('⏹️ توقف العملية بعد Step2');
+return;
+}
+
+const step3Success = await step3_clickProcess();
+
+if (pageClosed || !step3Success) {
+console.log('⏹️ توقف العملية بعد Step3');
+return;
+}
+
+await delay(200);
+
+await step4_clickArrow7Times(10, 500);
+
+if (pageClosed) return;
+
+await delay(500);
+
+await selectBothMenusFast();
+
+if (pageClosed) return;
+
+await delay(300);
+
+await step6_clickFinalButton();
+
+if (pageClosed) return;
+
+await step7_closeTab();
+}
+
+// ========================
+// بدء التشغيل
+// ========================
+
+(async () => {
+console.log('🚀 بدء تشغيل المنصة - بدون Step0، بدون سرعات، بدون OTP');
+
+createTimer(); // ⏱️
+
+console.log('⏳ وقت الانتظار الأقصى:', LONG_TIMEOUT/1000, 'ثانية');
+
+// التحقق من الصلاحية
+if (checkForUnauthorized()) {
+console.log('❌ منع وصول في البداية');
+const frToSave = currentFR || extractFR();
+if (frToSave) await updateFRData(frToSave, { message: "SUCCESS", retryCount: 0 });
+await delay(500);
+await closeTabSafely();
+return;
+}
+
+runProcess();
+
+setInterval(async () => {
+if (checkForUnauthorized()) {
+console.log('❌ منع وصول - إعادة تحميل');
+location.reload();
+}
+}, 2000);
+
+})();
+
+window.showSharedFile = () => { if (chrome?.storage) chrome.storage.local.get('fr_database', r => console.log(r)); };
+window.clearSharedFile = () => { if (chrome?.storage) chrome.storage.local.remove('fr_database', () => console.log('🗑️ Cleared')); };
 
 
-Selector: .cursor-pointerTag: divJavaScript Path: document.body.children[0].children[0].children[2].children[0].children[6].children[2].children[0].children[5]XPath: /html[1]/body[1]/div[1]/div[1]/div[2]/div[1]/div[6]/div[3]/div[1]/div[6]Attributes: class="cursor-pointer"Bounding Box: top: 415px, left: 1181.9375px, width: 46px, height: 70pxOuter HTML:<div class="cursor-pointer"><div class="flex items-center "><img src="/assets/svgs/stepperUnChecked.svg" alt=""></div><div class=""><p class="uppercase text-[10px] leading-3 mt-3 text-left text-tertiary">REVIEW</p></div></div>Inner HTML:<div class="flex items-center "><img src="/assets/svgs/stepperUnChecked.svg" alt=""></div><div class=""><p class="uppercase text-[10px] leading-3 mt-3 text-left text-tertiary">REVIEW</p></div>Text Content:REVIEW
-Selector: .flex.text-textPrimary.p-3.rounded.border.border-textPrimary.bg-white.text-[14px].leading-5.font-[500]Tag: buttonJavaScript Path: document.body.children[0].children[0].children[2].children[0].children[6].children[8].children[0]XPath: /html[1]/body[1]/div[1]/div[1]/div[2]/div[1]/div[6]/div[8]/button[1]Attributes: class="  flex text-textPrimary p-3 rounded border border-textPrimary bg-white   text-[14px] leading-5  font-[500]"Bounding Box: top: 1070.5px, left: 1387px, width: 49.66666793823242px, height: 51.208335876464844pxOuter HTML:<button class="  flex text-textPrimary p-3 rounded border border-textPrimary bg-white   text-[14px] leading-5  font-[500]"><img class="mx-1 w-[15px]" src="/assets/right.svg" alt="icon"> </button>Inner HTML:<img class="mx-1 w-[15px]" src="/assets/right.svg" alt="icon">Text Content:
+
+
+
+
+
+
+
+// ========================
+// background.js
+// ========================
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "closeTab" && sender.tab) {
+    chrome.tabs.remove(sender.tab.id);
+  }
+  else if (message.action === "openUrlInBackground") {
+    chrome.tabs.create({ url: message.url, active: false });
+  }
+  else if (message.action === "retryFR") {
+    setTimeout(() => {
+      const url = `https://ops.rer.sa/?q=${encodeURIComponent(message.fr)}+&filteredGraph=all`;
+      chrome.tabs.create({ url, active: false });
+    }, message.delay || 5000);
+  }
+});
+
+
+
+
+
+
+
+
+
+{
+  "manifest_version": 3,
+  "name": "Bot3.0",
+  "description": "transfer cases every where.",
+  "version": "1.0",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://teams.cloud.microsoft/*",
+    "https://ops.rer.sa/*",
+    "https://ops-sso.rer.sa/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://teams.cloud.microsoft/*"],
+      "js": ["teams-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://ops.rer.sa/*"],
+      "js": ["platform-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://ops-sso.rer.sa/*"],
+      "js": ["platform-content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
