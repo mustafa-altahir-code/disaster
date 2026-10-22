@@ -1,2 +1,476 @@
-Selector: div > div.transition-all.flex-row-reverse.duration-700 > div.w-full.p-8.transition-all.duration-700:nth-of-type(2) > div.max-w-8xl.font-ibm-sans.inner-container.relative > div.mt-12:nth-of-type(6) > div.mt-10.mb-10:nth-of-type(3) > div.flex.items-center.justify-center > div.cursor-pointer:nth-of-type(6)Text Content: المراجعة
-Selector: div > div.transition-all.duration-700 > div.w-full.p-8.transition-all.duration-700:nth-of-type(2) > div.max-w-8xl.font-ibm-sans.inner-container.relative > div.mt-12:nth-of-type(6) > div.mt-10.mb-10:nth-of-type(3) > div.flex.items-center.justify-center > div.cursor-pointer:nth-of-type(6)Text Content: REVIEW
+// ========================
+// platform-content.js - النسخة التشخيصية (Load Cases/Requests + Skip Claim Check + Direct Review Tab)
+// ========================
+
+let currentFR = null;
+let pageClosed = false;
+let processStartTime = null;
+
+// ========================
+// واجهة التمييز البصري وشريط الحالة
+// ========================
+
+function createDebugBanner() {
+  if (document.getElementById('debug-status-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'debug-status-banner';
+  banner.style = `
+    position: fixed;
+    top: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(17, 24, 39, 0.95);
+    color: #38bdf8;
+    border: 2px solid #0284c7;
+    border-radius: 12px;
+    padding: 10px 22px;
+    font-size: 14px;
+    font-weight: bold;
+    font-family: monospace, system-ui;
+    z-index: 99999999;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.7);
+    pointer-events: none;
+    direction: ltr;
+    text-align: center;
+  `;
+  banner.innerText = '🔍 Initializing Diagnostic Mode...';
+  document.body.appendChild(banner);
+}
+
+function updateDebugBanner(text, color = '#38bdf8') {
+  const banner = document.getElementById('debug-status-banner');
+  if (banner) {
+    banner.innerText = text;
+    banner.style.color = color;
+    banner.style.borderColor = color;
+  }
+}
+
+function highlightElement(el, status = 'checking', label = '') {
+  if (!el || !el.style) return;
+  
+  let borderColor = '#f59e0b';
+  let bgColor = 'rgba(245, 158, 11, 0.15)';
+  
+  if (status === 'success') {
+    borderColor = '#10b981';
+    bgColor = 'rgba(16, 185, 129, 0.25)';
+  } else if (status === 'error') {
+    borderColor = '#ef4444';
+    bgColor = 'rgba(239, 68, 68, 0.25)';
+  }
+
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.style.transition = 'all 0.3s ease';
+  el.style.outline = `4px solid ${borderColor}`;
+  el.style.backgroundColor = bgColor;
+  el.style.boxShadow = `0 0 15px ${borderColor}`;
+
+  if (label) {
+    el.setAttribute('data-debug-label', label);
+  }
+}
+
+// ========================
+// دوال مساعدة
+// ========================
+
+function delay(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
+
+function extractFR() {
+  try {
+    const urlMatch = window.location.href.match(/(?:FR|DU)\d+/i);
+    if (urlMatch) return urlMatch[0].toLowerCase();
+
+    const el = document.querySelector('#__next span.uppercase, [class*="fr"], [class*="du"], .font-mono, code');
+    if (el) {
+      const match = el.textContent?.match(/(?:FR|DU)\d+/i);
+      if (match) return match[0].toLowerCase();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function updateFRData(fr, updates) {
+  return new Promise((resolve) => {
+    if (!fr) return resolve();
+    const frLower = fr.toLowerCase();
+
+    if ((updates.message === 'SUCCESS' || updates.message === 'FAILED') && processStartTime) {
+      const processingTime = Math.floor((Date.now() - processStartTime) / 1000);
+      updates.processingTime = processingTime;
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.get(['fr_database'], (result) => {
+        let db = result.fr_database || { frs: {} };
+        db.frs[frLower] = { ...db.frs[frLower], fr: frLower, ...updates, timestamp: new Date().toLocaleString() };
+        db.lastUpdate = new Date().toISOString();
+        chrome.storage.local.set({ fr_database: db }, () => resolve());
+      });
+    } else {
+      const key = `REQ_${frLower}`;
+      const existing = JSON.parse(localStorage.getItem(key) || '{}');
+      localStorage.setItem(key, JSON.stringify({ ...existing, ...updates, timestamp: new Date().toLocaleString() }));
+      resolve();
+    }
+  });
+}
+
+async function closeTabSafely() {
+  pageClosed = true;
+  updateDebugBanner('🚪 Closing Tab in 2 seconds...', '#ef4444');
+  await delay(2000);
+  if (typeof chrome !== 'undefined' && chrome.runtime) {
+    chrome.runtime.sendMessage({ action: "closeTab" });
+  } else {
+    window.close();
+  }
+}
+
+function fastCheckUnauthorized() {
+  const alertBox = document.querySelector('.flex.justify-between.w-full.p-5, [role="alert"]');
+  if (alertBox) {
+    const text = alertBox.textContent || '';
+    if (
+      text.includes('رفض') || 
+      text.includes('صلاحية') || 
+      text.includes('Authorized') || 
+      text.includes('مصرح') ||
+      text.includes('403') ||
+      text.includes('Denied')
+    ) {
+      highlightElement(alertBox, 'error', 'Unauthorized Alert');
+      return true;
+    }
+  }
+  return false;
+}
+
+// فحص زر المعالجة / CLAIM
+function findProcessButton() {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  for (const b of buttons) {
+    const txt = b.textContent?.trim().toUpperCase() || '';
+    if (txt === 'المعالجة' || txt === 'CLAIM' || txt.includes('CLAIM') || txt.includes('المعالجة')) {
+      return b;
+    }
+  }
+  return null;
+}
+
+// فحص زر تحميل الطلبات (يدعم Cases و Requests بالعربي والإنجليزي)
+function findLoadButton() {
+  const buttons = Array.from(document.querySelectorAll('button, a[role="button"]'));
+  for (const b of buttons) {
+    const txt = b.textContent?.trim().toUpperCase() || '';
+    if (
+      txt.includes('LOAD REQUESTS') ||
+      txt.includes('LOAD CASES') ||
+      txt.includes('LOAD REQUEST') ||
+      txt.includes('تحميل الطلبات') ||
+      txt.includes('تحميل')
+    ) {
+      return b;
+    }
+  }
+  return null;
+}
+
+// ========================
+// الخطوة 1: فحص التحميل ثم المعالجة (إن وُجد)
+// ========================
+
+async function step1_handleLoadAndClaim() {
+  updateDebugBanner('⏳ Step 1: Scanning for Load button...', '#f59e0b');
+  await delay(1200);
+
+  if (fastCheckUnauthorized()) {
+    updateDebugBanner('🚫 Unauthorized detected!', '#ef4444');
+    const fr = currentFR || extractFR();
+    if (fr) await updateFRData(fr, { message: "SUCCESS", retryCount: 0 });
+    await closeTabSafely();
+    return false;
+  }
+
+  // 1. محاولة الضغط على زر تحميل الطلبات (Load Cases / Requests)
+  const loadBtn = findLoadButton();
+  if (loadBtn) {
+    highlightElement(loadBtn, 'success', 'Load Button');
+    updateDebugBanner('✅ Step 1: Load button found! Clicking...', '#10b981');
+    await delay(1000);
+    loadBtn.click();
+    updateDebugBanner('⏳ Step 1: Load clicked, waiting for UI update...', '#38bdf8');
+    await delay(2000);
+  } else {
+    updateDebugBanner('ℹ️ Step 1: No Load button found, moving to Claim check...', '#38bdf8');
+    await delay(1000);
+  }
+
+  // 2. فحص زر المعالجة / CLAIM (اختياري: ينقر عليه إن وُجد وإن لم يُوجد يواصل)
+  const processBtn = findProcessButton();
+  if (processBtn) {
+    highlightElement(processBtn, 'success', 'Claim Button');
+    updateDebugBanner('✅ Step 1: Claim / المعالجة button found! Clicking...', '#10b981');
+    await delay(1000);
+    processStartTime = Date.now();
+    processBtn.click();
+    await delay(1500);
+  } else {
+    updateDebugBanner('ℹ️ Step 1: No Claim button (Skipping to Review step)...', '#38bdf8');
+    await delay(1000);
+  }
+
+  return true;
+}
+
+// ========================
+// الخطوة 2: محاولة الانتقال المباشر لتبويب "المراجعة / REVIEW"
+// ========================
+
+function findReviewTab() {
+  // محاولة عبر نصوص العناصر
+  const allElements = Array.from(document.querySelectorAll('div.cursor-pointer, button, span.cursor-pointer'));
+  for (const el of allElements) {
+    const txt = el.textContent?.trim().toUpperCase() || '';
+    if (txt === 'المراجعة' || txt === 'REVIEW') {
+      return el;
+    }
+  }
+
+  // محاولة عبر محدد الـ nth-of-type الدقيق
+  const directSelector = document.querySelector(
+    'div.mt-10.mb-10 div.flex.items-center.justify-center > div.cursor-pointer:nth-of-type(6)'
+  );
+  if (directSelector) return directSelector;
+
+  return null;
+}
+
+async function step2_tryDirectReviewTab() {
+  updateDebugBanner('🎯 Step 2: Attempting to click Review / المراجعة tab directly...', '#f59e0b');
+  await delay(1200);
+
+  const reviewTab = findReviewTab();
+  if (reviewTab) {
+    highlightElement(reviewTab, 'success', 'Direct Review Tab');
+    updateDebugBanner('✅ Step 2: Review tab found! Clicking directly...', '#10b981');
+    await delay(1000);
+
+    reviewTab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    reviewTab.click();
+    await delay(2000);
+
+    // التحقق مما إذا انتقلت الصفحة لقائمة المشرفين مباشرة
+    const dropdownExists = document.querySelector('.drop-down-box, [class*="drop-down-box"], svg.css-8mmkcg');
+    if (dropdownExists) {
+      updateDebugBanner('🚀 Step 2: Successfully jumped to Review! Bypassing arrows.', '#10b981');
+      await delay(1000);
+      return true; // نجح التخطي
+    } else {
+      updateDebugBanner('⚠️ Step 2: Clicked Review but dropdown did not appear. Falling back to arrows...', '#eab308');
+      await delay(1200);
+    }
+  } else {
+    updateDebugBanner('ℹ️ Step 2: Direct Review tab not found. Using Arrow navigation...', '#38bdf8');
+    await delay(1000);
+  }
+
+  return false; // لم ينجح، استخدم الأسهم كبديل
+}
+
+// ========================
+// الخطة البديلة: التنقل بالأسهم (Fallback)
+// ========================
+
+async function step2_clickArrowFallback(maxClicks = 6) {
+  updateDebugBanner('🔎 Step 2 (Fallback): Clicking Left Arrows to reach Review...', '#f59e0b');
+  await delay(1200);
+
+  let clicked = 0;
+
+  while (clicked < maxClicks) {
+    if (pageClosed) return;
+
+    const img = document.querySelector('button img[src$="left.svg"]');
+    if (!img) {
+      updateDebugBanner(`✅ Step 2: Arrow navigation done (${clicked} clicks).`, '#10b981');
+      break;
+    }
+
+    const btn = img.closest('button');
+    if (btn) {
+      highlightElement(btn, 'checking', `Arrow ${clicked + 1}`);
+      updateDebugBanner(`🔘 Step 2: Clicking Arrow ${clicked + 1}/${maxClicks}...`, '#38bdf8');
+      await delay(800);
+
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      highlightElement(btn, 'success', `Arrow ${clicked + 1} Done`);
+      clicked++;
+    }
+
+    await delay(1000);
+  }
+
+  await delay(1200);
+}
+
+// ========================
+// الخطوة 3: اختيار المشرف الجيومكاني
+// ========================
+
+function pressKey(el, key) {
+  el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true }));
+}
+
+async function step3_selectSupervisor() {
+  updateDebugBanner('🚀 Step 3: Selecting Geospatial Supervisor...', '#f59e0b');
+  await delay(1500);
+
+  try {
+    // 1. خيار مباشر إن وجد
+    const directOption = document.querySelector('#react-select-2-option-0, [id*="react-select"][id*="option"]');
+    if (directOption && directOption.innerText.toUpperCase().includes('GEOSPATIAL')) {
+      highlightElement(directOption, 'success', 'Supervisor Direct Option');
+      updateDebugBanner('✅ Step 3: Direct Option found! Clicking...', '#10b981');
+      await delay(1000);
+      directOption.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      directOption.click();
+      return;
+    }
+
+    // 2. البحث في حاويات الـ Dropdown
+    const dropdowns = Array.from(document.querySelectorAll('.drop-down-box.css-b62m3t-container, [class*="drop-down-box"]'));
+    if (dropdowns.length > 0) {
+      const targetMenu = dropdowns[dropdowns.length - 1];
+      highlightElement(targetMenu, 'success', 'Supervisor Menu');
+
+      const control = targetMenu.querySelector('input, [role="combobox"], .css-8mjqw9-control, [class*="control"]');
+      if (control) {
+        control.focus();
+        updateDebugBanner('🎯 Step 3: Focusing menu and pressing ArrowDown...', '#38bdf8');
+        await delay(800);
+        pressKey(control, 'ArrowDown');
+        await delay(600);
+        pressKey(control, 'Enter');
+        updateDebugBanner('✅ Step 3: Selected via Keyboard.', '#10b981');
+        await delay(1200);
+        return;
+      }
+    }
+
+    // 3. النقر على سهم الـ SVG
+    const arrow = document.querySelector('svg.css-8mmkcg, .drop-down-box svg');
+    if (arrow) {
+      const parent = arrow.closest('div, button, span') || arrow;
+      highlightElement(parent, 'checking', 'SVG Arrow');
+      updateDebugBanner('📂 Step 3: Clicking SVG dropdown arrow...', '#38bdf8');
+      await delay(1000);
+
+      parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      parent.click();
+      await delay(1200);
+
+      const options = Array.from(document.querySelectorAll('[id*="react-select"][id*="option"]'));
+      if (options.length > 0) {
+        const targetOpt = options.find(o => o.innerText.toUpperCase().includes('GEOSPATIAL')) || options[0];
+        highlightElement(targetOpt, 'success', 'Selected Supervisor');
+        updateDebugBanner(`🎯 Step 3: Selecting: ${targetOpt.innerText.trim()}...`, '#10b981');
+        await delay(1000);
+
+        targetOpt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        targetOpt.click();
+        updateDebugBanner('✅ Step 3: Option Clicked successfully.', '#10b981');
+      }
+    } else {
+      updateDebugBanner('⚠️ Step 3: Dropdown Arrow not found!', '#eab308');
+    }
+  } catch (err) {
+    updateDebugBanner(`❌ Step 3 Error: ${err.message}`, '#ef4444');
+    console.error('Step 3 Error:', err);
+  }
+
+  await delay(1500);
+}
+
+// ========================
+// الخطوة 4: المتابعة / Proceed
+// ========================
+
+async function step4_clickProceed() {
+  updateDebugBanner('🔎 Step 4: Searching for Proceed / المتابعة button...', '#f59e0b');
+  await delay(1500);
+
+  const buttons = Array.from(document.querySelectorAll('button'));
+  let proceedBtn = null;
+
+  for (const b of buttons) {
+    const txt = b.textContent?.trim().toUpperCase() || '';
+    if (txt === 'المتابعة' || txt === 'PROCEED' || txt.includes('PROCEED') || txt.includes('المتابعة')) {
+      proceedBtn = b;
+      break;
+    }
+  }
+
+  if (proceedBtn) {
+    highlightElement(proceedBtn, 'success', 'Proceed Button');
+    updateDebugBanner('✅ Step 4: Proceed found! Clicking in 1.5s...', '#10b981');
+    await delay(1500);
+
+    proceedBtn.click();
+    console.log('✅ Clicked Proceed');
+
+    const frValue = currentFR || extractFR();
+    if (frValue) {
+      await updateFRData(frValue, { message: "SUCCESS", retryCount: 0 });
+    }
+
+    updateDebugBanner('🎉 All Steps Completed! Closing tab in 2s...', '#10b981');
+    await delay(2000);
+    await closeTabSafely();
+  } else {
+    updateDebugBanner('❌ Step 4: Proceed Button NOT found!', '#ef4444');
+    console.warn('Proceed button missing.');
+  }
+}
+
+// ========================
+// التشغيل الرئيسي
+// ========================
+
+async function runDiagnosticProcess() {
+  createDebugBanner();
+  await delay(1000);
+
+  currentFR = extractFR();
+  updateDebugBanner(`📌 Case ID: ${currentFR || 'NOT DETECTED'}`, '#38bdf8');
+  await delay(1200);
+
+  // 1. التحميل ثم المعالجة
+  const canContinue = await step1_handleLoadAndClaim();
+  if (!canContinue || pageClosed) return;
+
+  // 2. محاولة الانتقال المباشر لتبويب المراجعة / REVIEW
+  const jumpedDirectly = await step2_tryDirectReviewTab();
+  if (pageClosed) return;
+
+  // إذا لم ينجح الانتقال المباشر، استخدم الأسهم
+  if (!jumpedDirectly) {
+    await step2_clickArrowFallback(6);
+    if (pageClosed) return;
+  }
+
+  // 3. اختيار المشرف
+  await step3_selectSupervisor();
+  if (pageClosed) return;
+
+  // 4. المتابعة والإغلاق
+  await step4_clickProceed();
+}
+
+// بدء التشغيل
+runDiagnosticProcess();
