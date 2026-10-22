@@ -1,29 +1,309 @@
-{
-  "manifest_version": 3,
-  "name": "Bot3.0",
-  "description": "Transfer cases everywhere.",
-  "version": "1.0",
-  "permissions": [
-    "storage"
-  ],
-  "host_permissions": [
-    "https://teams.cloud.microsoft/*",
-    "https://ops.rer.sa/*",
-    "https://ops-sso.rer.sa/*"
-  ],
-  "background": {
-    "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["https://teams.cloud.microsoft/*"],
-      "js": ["teams-content.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://ops.rer.sa/*", "https://ops-sso.rer.sa/*"],
-      "js": ["platform-content.js"],
-      "run_at": "document_end"
+// ========================
+// platform-content.js - النسخة فائقة السرعة (Turbo Execution)
+// ========================
+
+let currentFR = null;
+let pageClosed = false;
+let processStartTime = null;
+
+// ========================
+// دوال مساعدة
+// ========================
+
+function extractFR() {
+  try {
+    const urlMatch = window.location.href.match(/(?:FR|DU)\d+/i);
+    if (urlMatch) return urlMatch[0].toLowerCase();
+
+    const el = document.querySelector('#__next span.uppercase, [class*="fr"], [class*="du"], .font-mono, code');
+    if (el) {
+      const match = el.textContent?.match(/(?:FR|DU)\d+/i);
+      if (match) return match[0].toLowerCase();
     }
-  ]
+    return null;
+  } catch {
+    return null;
+  }
 }
+
+function updateFRData(fr, updates) {
+  return new Promise((resolve) => {
+    if (!fr) return resolve();
+    const frLower = fr.toLowerCase();
+
+    if ((updates.message === 'SUCCESS' || updates.message === 'FAILED') && processStartTime) {
+      const processingTime = Math.floor((Date.now() - processStartTime) / 1000);
+      updates.processingTime = processingTime;
+      updates.processingTimeFormatted = formatProcessingTime(processingTime);
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.get(['fr_database'], (result) => {
+        let db = result.fr_database || { frs: {} };
+        db.frs[frLower] = { ...db.frs[frLower], fr: frLower, ...updates, timestamp: new Date().toLocaleString() };
+        db.lastUpdate = new Date().toISOString();
+        chrome.storage.local.set({ fr_database: db }, () => resolve());
+      });
+    } else {
+      const key = `REQ_${frLower}`;
+      const existing = JSON.parse(localStorage.getItem(key) || '{}');
+      localStorage.setItem(key, JSON.stringify({ ...existing, ...updates, timestamp: new Date().toLocaleString() }));
+      resolve();
+    }
+  });
+}
+
+function formatProcessingTime(seconds) {
+  if (seconds < 60) return `${seconds}ث`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${(seconds % 60).toString().padStart(2, '0')}د`;
+}
+
+function delay(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
+
+async function closeTabSafely() {
+  pageClosed = true;
+  if (typeof chrome !== 'undefined' && chrome.runtime) {
+    chrome.runtime.sendMessage({ action: "closeTab" });
+  } else {
+    window.close();
+  }
+}
+
+function fastCheckUnauthorized() {
+  const alertBox = document.querySelector('.flex.justify-between.w-full.p-5, [role="alert"]');
+  if (alertBox) {
+    const text = alertBox.textContent || '';
+    if (text.includes('رفض') || text.includes('صلاحية') || text.includes('Authorized') || text.includes('مصرح')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function handleUnauthorizedExit(reason = '') {
+  if (pageClosed) return true;
+  console.log(`❌ منع وصول أو طلب مسحوب: ${reason}`);
+  const fr = currentFR || extractFR();
+  if (fr) await updateFRData(fr, { message: "SUCCESS", retryCount: 0 });
+  await closeTabSafely();
+  return true;
+}
+
+// ========================
+// الخطوة المدمجة السريعة: تحديد حالة الطلب وزر البدء فوراً
+// ========================
+
+function detectInitialStateAndStart() {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const MAX_WAIT = 3500; // حد أقصى 3.5 ثوانٍ فقط للتعرف على الحالة
+
+    const interval = setInterval(async () => {
+      if (pageClosed) {
+        clearInterval(interval);
+        return resolve(false);
+      }
+
+      // 1. فحص فوري لمنع الوصول / الطلب المأخوذ
+      if (fastCheckUnauthorized()) {
+        clearInterval(interval);
+        await handleUnauthorizedExit('Fast Alert Box');
+        return resolve(false);
+      }
+
+      // 2. فحص الأزرار في شجرة العناصر
+      const buttons = document.querySelectorAll('button');
+      let loadBtn = null;
+      let processBtn = null;
+
+      for (let i = 0; i < buttons.length; i++) {
+        const txt = buttons[i].textContent?.trim();
+        if (txt === 'المعالجة') {
+          processBtn = buttons[i];
+          break;
+        }
+        if (txt === 'تحميل الطلبات على نفس القطعة') {
+          loadBtn = buttons[i];
+        }
+      }
+
+      // إذا وُجد زر المعالجة مباشرة (Step 3)
+      if (processBtn) {
+        clearInterval(interval);
+        processStartTime = Date.now();
+        console.log('⚡ زر المعالجة متاح فوراً');
+        processBtn.click();
+        return resolve(true);
+      }
+
+      // إذا وُجد زر تحميل الطلبات على نفس القطعة (Step 2)
+      if (loadBtn) {
+        clearInterval(interval);
+        console.log('⚡ زر تحميل الطلبات متاح');
+        loadBtn.click();
+        
+        // الانتقال السريع لانتظار زر المعالجة بعد النقر
+        const pBtn = await waitForProcessButton(2500);
+        if (pBtn) {
+          processStartTime = Date.now();
+          pBtn.click();
+          return resolve(true);
+        } else {
+          if (currentFR) await updateFRData(currentFR, { message: "SUCCESS", retryCount: 0 });
+          await closeTabSafely();
+          return resolve(false);
+        }
+      }
+
+      // 3. تجاوز الوقت: إذا لم يظهر أي زر
+      if (Date.now() - startTime > MAX_WAIT) {
+        clearInterval(interval);
+        console.log('⚡ لا توجد أزرار تفاعلية -> مكتمل');
+        if (currentFR) await updateFRData(currentFR, { message: "SUCCESS", retryCount: 0 });
+        await closeTabSafely();
+        return resolve(false);
+      }
+
+    }, 50); // فحص سريع كل 50 ملي ثانية
+  });
+}
+
+function waitForProcessButton(timeout = 2500) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const btn = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === 'المعالجة');
+      if (btn) {
+        clearInterval(timer);
+        resolve(btn);
+      } else if (Date.now() - start > timeout) {
+        clearInterval(timer);
+        resolve(null);
+      }
+    }, 50);
+  });
+}
+
+// ========================
+// Step 4 - الأسهم السريعة
+// ========================
+
+async function step4_clickArrowFast(maxClicks = 6, interval = 90) {
+  let clicked = 0;
+  let emptyRetries = 0;
+
+  while (clicked < maxClicks) {
+    if (pageClosed) return;
+
+    const img = document.querySelector('button img[src$="left.svg"]');
+    if (!img) {
+      emptyRetries++;
+      if (emptyRetries >= 2) break;
+      await delay(120);
+      continue;
+    }
+
+    emptyRetries = 0;
+    const btn = img.closest("button");
+    if (btn) {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      clicked++;
+    }
+    await delay(interval);
+  }
+}
+
+// ========================
+// Step 5 - القوائم
+// ========================
+
+function pressKey(el, key) {
+  el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true }));
+}
+
+async function selectBothMenusFast() {
+  try {
+    const dropdowns = document.querySelectorAll('.drop-down-box.css-b62m3t-container');
+    if (!dropdowns.length) return;
+
+    // القائمة الأولى
+    const control = dropdowns[0].querySelector('input, [role="combobox"], .css-8mjqw9-control');
+    if (control) {
+      control.focus();
+      pressKey(control, 'ArrowDown');
+      pressKey(control, 'Enter');
+    }
+
+    await delay(180);
+
+    // القائمة الثانية
+    const arrow = document.querySelector('svg.css-8mmkcg');
+    if (arrow) {
+      const parent = arrow.closest('div, button, span') || arrow;
+      parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      parent.click();
+
+      await delay(120);
+
+      const firstOpt = document.querySelector('[id*="react-select"][id*="option"]');
+      if (firstOpt) {
+        firstOpt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        firstOpt.click();
+      }
+    }
+  } catch (err) {
+    console.error('❌ Step5 Error:', err);
+  }
+}
+
+// ========================
+// Step 6 - المتابعة والإغلاق بعد ثانية
+// ========================
+
+async function step6_clickFinalButtonAndClose() {
+  try {
+    const btn = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === 'المتابعة');
+    if (!btn) return;
+
+    btn.click();
+    console.log('✅ تم الضغط على المتابعة');
+
+    const frValue = currentFR || extractFR();
+    if (frValue) {
+      await updateFRData(frValue, { message: "SUCCESS", retryCount: 0 });
+    }
+
+    await delay(1000);
+    await closeTabSafely();
+  } catch (err) {
+    console.error('❌ Step6 Error:', err);
+  }
+}
+
+// ========================
+// المحرك الرئيسي
+// ========================
+
+async function runProcess() {
+  currentFR = extractFR();
+
+  const canContinue = await detectInitialStateAndStart();
+  if (!canContinue || pageClosed) return;
+
+  await delay(150);
+  await step4_clickArrowFast(6, 90);
+  if (pageClosed) return;
+
+  await delay(200);
+  await selectBothMenusFast();
+  if (pageClosed) return;
+
+  await delay(200);
+  await step6_clickFinalButtonAndClose();
+}
+
+// بدء التنفيذ الفوري
+runProcess();
