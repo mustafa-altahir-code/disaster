@@ -1,5 +1,5 @@
 // ========================
-// platform-content.js - فحص حالة الطلب في العمود السادس (مع دعم Geospatial Specialist)
+// platform-content.js - النسخة فائقة السرعة (Ultra Turbo Production Mode)
 // ========================
 
 let currentFR = null;
@@ -7,72 +7,7 @@ let pageClosed = false;
 let processStartTime = null;
 
 // ========================
-// واجهة التمييز البصري وشريط الحالة
-// ========================
-
-function createDebugBanner() {
-  if (document.getElementById('debug-status-banner')) return;
-  const banner = document.createElement('div');
-  banner.id = 'debug-status-banner';
-  banner.style = `
-    position: fixed;
-    top: 15px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(17, 24, 39, 0.95);
-    color: #38bdf8;
-    border: 2px solid #0284c7;
-    border-radius: 12px;
-    padding: 10px 22px;
-    font-size: 14px;
-    font-weight: bold;
-    font-family: monospace, system-ui;
-    z-index: 99999999;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.7);
-    pointer-events: none;
-    direction: ltr;
-    text-align: center;
-  `;
-  banner.innerText = '🔍 Initializing Diagnostic Mode...';
-  document.body.appendChild(banner);
-}
-
-function updateDebugBanner(text, color = '#38bdf8') {
-  const banner = document.getElementById('debug-status-banner');
-  if (banner) {
-    banner.innerText = text;
-    banner.style.color = color;
-    banner.style.borderColor = color;
-  }
-}
-
-function highlightElement(el, status = 'checking', label = '') {
-  if (!el || !el.style) return;
-  
-  let borderColor = '#f59e0b';
-  let bgColor = 'rgba(245, 158, 11, 0.15)';
-  
-  if (status === 'success') {
-    borderColor = '#10b981';
-    bgColor = 'rgba(16, 185, 129, 0.25)';
-  } else if (status === 'error') {
-    borderColor = '#ef4444';
-    bgColor = 'rgba(239, 68, 68, 0.25)';
-  }
-
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  el.style.transition = 'all 0.3s ease';
-  el.style.outline = `4px solid ${borderColor}`;
-  el.style.backgroundColor = bgColor;
-  el.style.boxShadow = `0 0 15px ${borderColor}`;
-
-  if (label) {
-    el.setAttribute('data-debug-label', label);
-  }
-}
-
-// ========================
-// دوال مساعدة
+// دوال مساعدة وسريعة
 // ========================
 
 function delay(ms) {
@@ -103,6 +38,7 @@ function updateFRData(fr, updates) {
     if ((updates.message === 'SUCCESS' || updates.message === 'FAILED') && processStartTime) {
       const processingTime = Math.floor((Date.now() - processStartTime) / 1000);
       updates.processingTime = processingTime;
+      updates.processingTimeFormatted = processingTime < 60 ? `${processingTime}ث` : `${Math.floor(processingTime / 60)}:${(processingTime % 60).toString().padStart(2, '0')}د`;
     }
 
     if (typeof chrome !== 'undefined' && chrome.storage) {
@@ -123,8 +59,6 @@ function updateFRData(fr, updates) {
 
 async function closeTabSafely() {
   pageClosed = true;
-  updateDebugBanner('🚪 Closing Tab in 2 seconds...', '#ef4444');
-  await delay(2000);
   if (typeof chrome !== 'undefined' && chrome.runtime) {
     chrome.runtime.sendMessage({ action: "closeTab" });
   } else {
@@ -144,7 +78,6 @@ function fastCheckUnauthorized() {
       text.includes('403') ||
       text.includes('Denied')
     ) {
-      highlightElement(alertBox, 'error', 'Unauthorized Alert');
       return true;
     }
   }
@@ -152,20 +85,20 @@ function fastCheckUnauthorized() {
 }
 
 function findProcessButton() {
-  const buttons = Array.from(document.querySelectorAll('button'));
-  for (const b of buttons) {
-    const txt = b.textContent?.trim().toUpperCase() || '';
+  const buttons = document.querySelectorAll('button');
+  for (let i = 0; i < buttons.length; i++) {
+    const txt = buttons[i].textContent?.trim().toUpperCase() || '';
     if (txt === 'المعالجة' || txt === 'CLAIM' || txt.includes('CLAIM') || txt.includes('المعالجة')) {
-      return b;
+      return buttons[i];
     }
   }
   return null;
 }
 
 function findLoadButton() {
-  const buttons = Array.from(document.querySelectorAll('button, a[role="button"]'));
-  for (const b of buttons) {
-    const txt = b.textContent?.trim().toUpperCase() || '';
+  const buttons = document.querySelectorAll('button, a[role="button"]');
+  for (let i = 0; i < buttons.length; i++) {
+    const txt = buttons[i].textContent?.trim().toUpperCase() || '';
     if (
       txt.includes('LOAD REQUESTS') ||
       txt.includes('LOAD CASES') ||
@@ -173,73 +106,48 @@ function findLoadButton() {
       txt.includes('تحميل الطلبات') ||
       txt.includes('تحميل')
     ) {
-      return b;
+      return buttons[i];
     }
   }
   return null;
 }
 
 // ========================
-// الخطوة 1: الضغط على تحميل الطلبات + فحص حالة المدقق الجيومكاني في العمود السادس
+// الخطوة 1: الضغط على التحميل + فحص حالة المدقق الجيومكاني في العمود السادس
 // ========================
 
 async function step1_loadAndVerifyAuditorStatus() {
-  updateDebugBanner('⏳ Step 1: Scanning for Load button...', '#f59e0b');
-  await delay(1200);
-
   if (fastCheckUnauthorized()) {
-    updateDebugBanner('🚫 Unauthorized detected!', '#ef4444');
     const fr = currentFR || extractFR();
     if (fr) await updateFRData(fr, { message: "SUCCESS", retryCount: 0 });
     await closeTabSafely();
     return false;
   }
 
-  // 1. الضغط على زر التحميل
+  // 1. الضغط على زر التحميل إن وُجد
   const loadBtn = findLoadButton();
   if (loadBtn) {
-    highlightElement(loadBtn, 'success', 'Load Button');
-    updateDebugBanner('✅ Step 1: Load button found! Clicking...', '#10b981');
-    await delay(1000);
     loadBtn.click();
-    updateDebugBanner('⏳ Step 1: Waiting for table to load...', '#38bdf8');
-    await delay(2500);
-  } else {
-    updateDebugBanner('ℹ️ Step 1: No Load button found, checking if table is already visible...', '#38bdf8');
-    await delay(1000);
+    await delay(350); // مهلة مجهرية لظهور الجدول
   }
 
-  // 2. البحث عن الجدول وفحص الصف الخاص بالطلب الحالي
-  updateDebugBanner(`🔎 Searching for case ${currentFR} in table...`, '#f59e0b');
-  await delay(1000);
-
-  const rows = Array.from(document.querySelectorAll('table tbody tr, [role="row"]'));
+  // 2. فحص سريع للصف والعمود السادس
+  const rows = document.querySelectorAll('table tbody tr, [role="row"]');
   let matchedRow = null;
 
-  for (const row of rows) {
-    const rowText = row.textContent?.toLowerCase() || '';
-    if (currentFR && rowText.includes(currentFR.toLowerCase())) {
-      matchedRow = row;
+  for (let i = 0; i < rows.length; i++) {
+    if (currentFR && rows[i].textContent?.toLowerCase().includes(currentFR.toLowerCase())) {
+      matchedRow = rows[i];
       break;
     }
   }
 
   if (matchedRow) {
-    highlightElement(matchedRow, 'checking', 'Matched Case Row');
-    updateDebugBanner(`📋 Case row found! Inspecting column 6...`, '#38bdf8');
-    await delay(1200);
-
-    // فحص العمود السادس
     const col6 = matchedRow.querySelector('td:nth-child(6), [role="cell"]:nth-child(6)') || matchedRow.children[5];
 
     if (col6) {
-      highlightElement(col6, 'checking', 'Column 6 Status');
-      const statusText = col6.textContent?.trim() || '';
-      const statusUpper = statusText.toUpperCase();
-      updateDebugBanner(`🧐 Column 6 Status: "${statusText}"`, '#38bdf8');
-      await delay(1500);
+      const statusUpper = (col6.textContent?.trim() || '').toUpperCase();
 
-      // الكلمات المفتاحية الدالة على أن الطلب عند المدقق الجيومكاني (عربي وإنجليزي)
       const isGeospatialAuditor = 
         statusUpper.includes('مدقق جيومكاني') ||
         statusUpper.includes('المدقق الجيومكاني') ||
@@ -250,43 +158,27 @@ async function step1_loadAndVerifyAuditorStatus() {
         statusUpper.includes('AUDITOR') ||
         statusUpper.includes('مدقق');
 
-      if (isGeospatialAuditor) {
-        highlightElement(col6, 'success', 'Is Geospatial Specialist/Auditor');
-        updateDebugBanner('✅ Case IS with Geospatial Specialist -> Proceeding!', '#10b981');
-        await delay(1200);
-      } else {
-        // إذا لم يكن عند المدقق الجيومكاني -> يعتبر منتهي بنجاح ويغلق
-        highlightElement(col6, 'success', 'Not Specialist -> Success');
-        updateDebugBanner(`✅ Status not specialist ("${statusText}") -> Marking SUCCESS!`, '#10b981');
-        await delay(1500);
+      if (!isGeospatialAuditor) {
+        // ليس عند المدقق -> تم الانتهاء بنجاح، أغلق مباشرة
         if (currentFR) {
           await updateFRData(currentFR, {
             message: "SUCCESS",
             retryCount: 0,
-            status: statusText
+            status: col6.textContent?.trim() || ''
           });
         }
         await closeTabSafely();
         return false;
       }
-    } else {
-      updateDebugBanner('⚠️ Column 6 not found in matched row, proceeding with caution...', '#eab308');
-      await delay(1200);
     }
-  } else {
-    updateDebugBanner('ℹ️ Case row not found in table, continuing normal flow...', '#38bdf8');
-    await delay(1200);
   }
 
-  // 3. الضغط على زر المعالجة إن وُجد (اختياري)
+  // 3. الضغط على زر المعالجة/CLAIM إن وجد
   const processBtn = findProcessButton();
   if (processBtn) {
-    highlightElement(processBtn, 'success', 'Claim Button');
-    updateDebugBanner('✅ Step 1: Claim button found! Clicking...', '#10b981');
-    await delay(1000);
     processStartTime = Date.now();
     processBtn.click();
-    await delay(1500);
+    await delay(80);
   }
 
   return true;
@@ -297,87 +189,54 @@ async function step1_loadAndVerifyAuditorStatus() {
 // ========================
 
 function findReviewTab() {
-  const allElements = Array.from(document.querySelectorAll('div.cursor-pointer, button, span.cursor-pointer'));
-  for (const el of allElements) {
-    const txt = el.textContent?.trim().toUpperCase() || '';
-    if (txt === 'المراجعة' || txt === 'REVIEW') {
-      return el;
-    }
-  }
-
   const directSelector = document.querySelector(
     'div.mt-10.mb-10 div.flex.items-center.justify-center > div.cursor-pointer:nth-of-type(6)'
   );
   if (directSelector) return directSelector;
 
+  const elements = document.querySelectorAll('div.cursor-pointer, button, span.cursor-pointer');
+  for (let i = 0; i < elements.length; i++) {
+    const txt = elements[i].textContent?.trim().toUpperCase() || '';
+    if (txt === 'المراجعة' || txt === 'REVIEW') {
+      return elements[i];
+    }
+  }
   return null;
 }
 
 async function step2_tryDirectReviewTab() {
-  updateDebugBanner('🎯 Step 2: Attempting to click Review / المراجعة tab directly...', '#f59e0b');
-  await delay(1200);
-
   const reviewTab = findReviewTab();
   if (reviewTab) {
-    highlightElement(reviewTab, 'success', 'Direct Review Tab');
-    updateDebugBanner('✅ Step 2: Review tab found! Clicking directly...', '#10b981');
-    await delay(1000);
-
     reviewTab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     reviewTab.click();
-    await delay(2000);
+    await delay(120);
 
     const dropdownExists = document.querySelector('.drop-down-box, [class*="drop-down-box"], svg.css-8mmkcg');
-    if (dropdownExists) {
-      updateDebugBanner('🚀 Step 2: Successfully jumped to Review! Bypassing arrows.', '#10b981');
-      await delay(1000);
-      return true;
-    } else {
-      updateDebugBanner('⚠️ Step 2: Clicked Review but dropdown not ready. Using arrows...', '#eab308');
-      await delay(1200);
-    }
-  } else {
-    updateDebugBanner('ℹ️ Step 2: Direct Review tab not found. Using Arrow navigation...', '#38bdf8');
-    await delay(1000);
+    if (dropdownExists) return true;
   }
-
   return false;
 }
 
 // ========================
-// الخطة البديلة: التنقل بالأسهم (Fallback)
+// الخطة البديلة: التنقل بالأسهم
 // ========================
 
 async function step2_clickArrowFallback(maxClicks = 6) {
-  updateDebugBanner('🔎 Step 2 (Fallback): Clicking Left Arrows to reach Review...', '#f59e0b');
-  await delay(1200);
-
   let clicked = 0;
 
   while (clicked < maxClicks) {
     if (pageClosed) return;
 
     const img = document.querySelector('button img[src$="left.svg"]');
-    if (!img) {
-      updateDebugBanner(`✅ Step 2: Arrow navigation done (${clicked} clicks).`, '#10b981');
-      break;
-    }
+    if (!img) break;
 
     const btn = img.closest('button');
     if (btn) {
-      highlightElement(btn, 'checking', `Arrow ${clicked + 1}`);
-      updateDebugBanner(`🔘 Step 2: Clicking Arrow ${clicked + 1}/${maxClicks}...`, '#38bdf8');
-      await delay(800);
-
       btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      highlightElement(btn, 'success', `Arrow ${clicked + 1} Done`);
       clicked++;
     }
-
-    await delay(1000);
+    await delay(60);
   }
-
-  await delay(1200);
 }
 
 // ========================
@@ -389,126 +248,85 @@ function pressKey(el, key) {
 }
 
 async function step3_selectSupervisor() {
-  updateDebugBanner('🚀 Step 3: Selecting Geospatial Supervisor...', '#f59e0b');
-  await delay(1500);
-
   try {
+    // 1. فحص وجود خيار مباشر
     const directOption = document.querySelector('#react-select-2-option-0, [id*="react-select"][id*="option"]');
     if (directOption && directOption.innerText.toUpperCase().includes('GEOSPATIAL')) {
-      highlightElement(directOption, 'success', 'Supervisor Direct Option');
-      updateDebugBanner('✅ Step 3: Direct Option found! Clicking...', '#10b981');
-      await delay(1000);
       directOption.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       directOption.click();
       return;
     }
 
-    const dropdowns = Array.from(document.querySelectorAll('.drop-down-box.css-b62m3t-container, [class*="drop-down-box"]'));
+    // 2. البحث في حاويات الـ Dropdown والضغط بـ Enter
+    const dropdowns = document.querySelectorAll('.drop-down-box.css-b62m3t-container, [class*="drop-down-box"]');
     if (dropdowns.length > 0) {
       const targetMenu = dropdowns[dropdowns.length - 1];
-      highlightElement(targetMenu, 'success', 'Supervisor Menu');
-
       const control = targetMenu.querySelector('input, [role="combobox"], .css-8mjqw9-control, [class*="control"]');
       if (control) {
         control.focus();
-        updateDebugBanner('🎯 Step 3: Focusing menu and pressing ArrowDown...', '#38bdf8');
-        await delay(800);
         pressKey(control, 'ArrowDown');
-        await delay(600);
         pressKey(control, 'Enter');
-        updateDebugBanner('✅ Step 3: Selected via Keyboard.', '#10b981');
-        await delay(1200);
         return;
       }
     }
 
+    // 3. النقر على سهم الـ SVG
     const arrow = document.querySelector('svg.css-8mmkcg, .drop-down-box svg');
     if (arrow) {
       const parent = arrow.closest('div, button, span') || arrow;
-      highlightElement(parent, 'checking', 'SVG Arrow');
-      updateDebugBanner('📂 Step 3: Clicking SVG dropdown arrow...', '#38bdf8');
-      await delay(1000);
-
       parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       parent.click();
-      await delay(1200);
+      await delay(80);
 
-      const options = Array.from(document.querySelectorAll('[id*="react-select"][id*="option"]'));
+      const options = document.querySelectorAll('[id*="react-select"][id*="option"]');
       if (options.length > 0) {
-        const targetOpt = options.find(o => o.innerText.toUpperCase().includes('GEOSPATIAL')) || options[0];
-        highlightElement(targetOpt, 'success', 'Selected Supervisor');
-        updateDebugBanner(`🎯 Step 3: Selecting: ${targetOpt.innerText.trim()}...`, '#10b981');
-        await delay(1000);
-
+        const targetOpt = Array.from(options).find(o => o.innerText.toUpperCase().includes('GEOSPATIAL')) || options[0];
         targetOpt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
         targetOpt.click();
-        updateDebugBanner('✅ Step 3: Option Clicked successfully.', '#10b981');
       }
-    } else {
-      updateDebugBanner('⚠️ Step 3: Dropdown Arrow not found!', '#eab308');
     }
   } catch (err) {
-    updateDebugBanner(`❌ Step 3 Error: ${err.message}`, '#ef4444');
     console.error('Step 3 Error:', err);
   }
-
-  await delay(1500);
 }
 
 // ========================
-// الخطوة 4: المتابعة / Proceed
+// الخطوة 4: المتابعة / Proceed والإغلاق
 // ========================
 
 async function step4_clickProceed() {
-  updateDebugBanner('🔎 Step 4: Searching for Proceed / المتابعة button...', '#f59e0b');
-  await delay(1500);
-
-  const buttons = Array.from(document.querySelectorAll('button'));
+  const buttons = document.querySelectorAll('button');
   let proceedBtn = null;
 
-  for (const b of buttons) {
-    const txt = b.textContent?.trim().toUpperCase() || '';
+  for (let i = 0; i < buttons.length; i++) {
+    const txt = buttons[i].textContent?.trim().toUpperCase() || '';
     if (txt === 'المتابعة' || txt === 'PROCEED' || txt.includes('PROCEED') || txt.includes('المتابعة')) {
-      proceedBtn = b;
+      proceedBtn = buttons[i];
       break;
     }
   }
 
   if (proceedBtn) {
-    highlightElement(proceedBtn, 'success', 'Proceed Button');
-    updateDebugBanner('✅ Step 4: Proceed found! Clicking in 1.5s...', '#10b981');
-    await delay(1500);
-
     proceedBtn.click();
-    console.log('✅ Clicked Proceed');
 
     const frValue = currentFR || extractFR();
     if (frValue) {
       await updateFRData(frValue, { message: "SUCCESS", retryCount: 0 });
     }
 
-    updateDebugBanner('🎉 All Steps Completed! Closing tab in 2s...', '#10b981');
-    await delay(2000);
+    await delay(1000);
     await closeTabSafely();
-  } else {
-    updateDebugBanner('❌ Step 4: Proceed Button NOT found!', '#ef4444');
-    console.warn('Proceed button missing.');
   }
 }
 
 // ========================
-// التشغيل الرئيسي
+// المحرك الرئيسي فائق السرعة
 // ========================
 
-async function runDiagnosticProcess() {
-  createDebugBanner();
-  await delay(1000);
-
+async function runUltraFastProcess() {
   currentFR = extractFR();
-  updateDebugBanner(`📌 Case ID: ${currentFR || 'NOT DETECTED'}`, '#38bdf8');
-  await delay(1200);
 
-  // 1. التحميل والتحقق من حالة الطلب في العمود السادس
+  // 1. التحميل والتحقق من حالة الطلب
   const canContinue = await step1_loadAndVerifyAuditorStatus();
   if (!canContinue || pageClosed) return;
 
@@ -516,19 +334,23 @@ async function runDiagnosticProcess() {
   const jumpedDirectly = await step2_tryDirectReviewTab();
   if (pageClosed) return;
 
-  // إذا لم ينجح الانتقال المباشر، استخدم الأسهم
+  // إذا لم ينجح الانتقال المباشر، استخدم الأسهم السريعة
   if (!jumpedDirectly) {
     await step2_clickArrowFallback(6);
     if (pageClosed) return;
   }
 
+  await delay(80);
+
   // 3. اختيار المشرف
   await step3_selectSupervisor();
   if (pageClosed) return;
 
-  // 4. المتابعة والإغلاق
+  await delay(80);
+
+  // 4. المتابعة والإغلاق بعد ثانية
   await step4_clickProceed();
 }
 
-// بدء التشغيل
-runDiagnosticProcess();
+// تشغيل فوري بدون أي تأخير
+runUltraFastProcess();
