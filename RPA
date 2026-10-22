@@ -1,5 +1,5 @@
 // ========================
-// platform-content.js - النسخة فائقة السرعة المعتمدة على الفحص الذكي (Smart Polling)
+// platform-content.js - النسخة المتوازنة (سريعة ومضمونة بدون Race Conditions)
 // ========================
 
 let currentFR = null;
@@ -10,8 +10,7 @@ function delay(ms) {
   return new Promise(res => setTimeout(res, ms));
 }
 
-// دالة انتظار ذكي للعناصر: تفحص كل 40ms وتتحرك لحظة ظهور العنصر
-function waitForCondition(checkFn, timeout = 3500) {
+function waitForCondition(checkFn, timeout = 4000) {
   return new Promise((resolve) => {
     const start = Date.now();
     const interval = setInterval(() => {
@@ -28,7 +27,7 @@ function waitForCondition(checkFn, timeout = 3500) {
         clearInterval(interval);
         return resolve(null);
       }
-    }, 40);
+    }, 60);
   });
 }
 
@@ -131,7 +130,7 @@ function findLoadButton() {
 }
 
 // ========================
-// الخطوة 1: فحص التحميل وانتظار ظهور الصف بدقة
+// الخطوة 1: التحميل والتحقق من حالة الطلب
 // ========================
 
 async function step1_loadAndVerifyAuditorStatus() {
@@ -146,9 +145,10 @@ async function step1_loadAndVerifyAuditorStatus() {
   const loadBtn = findLoadButton();
   if (loadBtn) {
     loadBtn.click();
+    await delay(300); // مهلة خفيفة عشان الشبكة تبدأ تجيب البيانات
   }
 
-  // 2. الانتظار الذكي حتى يظهر الجدول والصف المطلوب
+  // 2. الانتظار حتى يرسم الجدول
   const matchedRow = await waitForCondition(() => {
     const rows = document.querySelectorAll('table tbody tr, [role="row"]');
     if (!rows.length) return null;
@@ -158,7 +158,7 @@ async function step1_loadAndVerifyAuditorStatus() {
       }
     }
     return null;
-  }, 3000);
+  }, 3500);
 
   if (matchedRow) {
     const col6 = matchedRow.querySelector('td:nth-child(6), [role="cell"]:nth-child(6)') || matchedRow.children[5];
@@ -176,7 +176,7 @@ async function step1_loadAndVerifyAuditorStatus() {
         statusUpper.includes('AUDITOR') ||
         statusUpper.includes('مدقق');
 
-      // إذا وُجد الصف ولم تكن حالته عند المدقق الجيومكاني -> اعتبره نجاح وأغلق
+      // إذا وُجد الصف ولكن مش عند المدقق/الأخصائي الجيومكاني -> اعتبره مكتمل واقفل
       if (!isGeospatialAuditor && statusUpper.length > 0) {
         if (currentFR) {
           await updateFRData(currentFR, {
@@ -191,19 +191,19 @@ async function step1_loadAndVerifyAuditorStatus() {
     }
   }
 
-  // 3. الضغط على زر المعالجة/CLAIM فور ظهوره (دون تضييع وقت)
+  // 3. الضغط على المعالجة/CLAIM إن وُجد
   const processBtn = findProcessButton();
   if (processBtn) {
     processStartTime = Date.now();
     processBtn.click();
-    await delay(150);
+    await delay(250);
   }
 
   return true;
 }
 
 // ========================
-// الخطوة 2: الانتقال لصفحة المراجعة (بالزر المباشر أو الأسهم)
+// الخطوة 2: الانتقال لتبويب المراجعة
 // ========================
 
 function findReviewTab() {
@@ -223,21 +223,20 @@ function findReviewTab() {
 }
 
 async function step2_navigateToReview() {
-  // محاولة القفز المباشر أولاً
   const reviewTab = findReviewTab();
   if (reviewTab) {
     reviewTab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     reviewTab.click();
 
-    // ننتظر حتى 800ms لنرى هل فُتحت صفحة المراجعة
+    // تأكيد إن القائمة ظهرت
     const reached = await waitForCondition(() => {
       return document.querySelector('.drop-down-box, [class*="drop-down-box"], svg.css-8mmkcg');
-    }, 800);
+    }, 1200);
 
     if (reached) return true;
   }
 
-  // في حال لم ينجح، اضغط الأسهم بشكل سريع
+  // Fallback: الأسهم بتهدئة خفيفة ومضمونة (180ms)
   let clicked = 0;
   while (clicked < 6 && !pageClosed) {
     const img = document.querySelector('button img[src$="left.svg"]');
@@ -248,7 +247,7 @@ async function step2_navigateToReview() {
       btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
       clicked++;
     }
-    await delay(100);
+    await delay(180);
   }
 
   return true;
@@ -263,7 +262,6 @@ function pressKey(el, key) {
 }
 
 async function step3_selectSupervisor() {
-  // انتظر ذكياً حتى ترسم React القوائم في الشاشة
   const targetDropdown = await waitForCondition(() => {
     const directOpt = document.querySelector('#react-select-2-option-0, [id*="react-select"][id*="option"]');
     if (directOpt) return directOpt;
@@ -275,34 +273,37 @@ async function step3_selectSupervisor() {
     if (arrow) return arrow;
 
     return null;
-  }, 3000);
+  }, 3500);
 
   if (!targetDropdown) return;
 
-  // خيار مباشر
+  // خيار مباشر معروض
   if (targetDropdown.id && targetDropdown.id.includes('option')) {
     targetDropdown.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     targetDropdown.click();
+    await delay(200);
     return;
   }
 
-  // من خلال إدخال الـ Control
+  // عبر لوحة المفاتيح
   const control = targetDropdown.querySelector?.('input, [role="combobox"], .css-8mjqw9-control, [class*="control"]');
   if (control) {
     control.focus();
-    await delay(60);
+    await delay(80);
     pressKey(control, 'ArrowDown');
-    await delay(60);
+    await delay(80);
     pressKey(control, 'Enter');
+    await delay(200);
     return;
   }
 
-  // من خلال الضغط على السهم
+  // عبر النقر على سهم القائمة
   const arrow = targetDropdown.tagName === 'svg' ? targetDropdown : targetDropdown.querySelector?.('svg');
   if (arrow) {
     const parent = arrow.closest('div, button, span') || arrow;
     parent.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     parent.click();
+    await delay(150);
 
     const opt = await waitForCondition(() => {
       const opts = document.querySelectorAll('[id*="react-select"][id*="option"]');
@@ -313,6 +314,7 @@ async function step3_selectSupervisor() {
     if (opt) {
       opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       opt.click();
+      await delay(200);
     }
   }
 }
@@ -347,26 +349,32 @@ async function step4_clickProceed() {
 }
 
 // ========================
-// التشغيل الرئيسي
+// المحرك الرئيسي
 // ========================
 
-async function runOptimizedProcess() {
+async function runProcess() {
   currentFR = extractFR();
 
-  // 1. فحص التحميل وحالة المدقق
+  // 1. التحميل والتحقق من حالة المدقق
   const canContinue = await step1_loadAndVerifyAuditorStatus();
   if (!canContinue || pageClosed) return;
+
+  await delay(150);
 
   // 2. الوصول لتبويب المراجعة
   await step2_navigateToReview();
   if (pageClosed) return;
 
+  await delay(200);
+
   // 3. اختيار المشرف
   await step3_selectSupervisor();
   if (pageClosed) return;
+
+  await delay(200);
 
   // 4. المتابعة والإغلاق
   await step4_clickProceed();
 }
 
-runOptimizedProcess();
+runProcess();
