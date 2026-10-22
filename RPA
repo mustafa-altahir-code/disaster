@@ -1,9 +1,7 @@
 // ========================
-// platform-content.js - النسخة المحدثة (دعم DU & FR + أسهم سريعة + نجاح بتغير الرابط)
+// platform-content.js - النسخة النهائية (إغلاق فوري بعد ثانية من المتابعة)
 // ========================
 
-const MAX_RETRIES = 1;
-const SUCCESS_TIMEOUT = 10000; // 10 ثواني لانتظار التحويل بعد المتابعة
 const LONG_TIMEOUT = 20000;
 let currentFR = null;
 let pageClosed = false;
@@ -74,21 +72,6 @@ function formatProcessingTime(seconds) {
     const remainingSeconds = seconds % 60;
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}د`;
   }
-}
-
-function getFRData(fr) {
-  return new Promise((resolve) => {
-    const frLower = fr.toLowerCase();
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      chrome.storage.local.get(['fr_database'], (result) => {
-        resolve(result.fr_database?.frs?.[frLower] || null);
-      });
-    } else {
-      const key = `REQ_${frLower}`;
-      const data = localStorage.getItem(key);
-      resolve(data ? JSON.parse(data) : null);
-    }
-  });
 }
 
 function delay(ms) {
@@ -351,10 +334,10 @@ async function selectBothMenusFast() {
 }
 
 // ========================
-// Step 6 - المتابعة
+// Step 6 & 7 - النقر على المتابعة ثم الإغلاق بعد ثانية
 // ========================
 
-async function step6_clickFinalButton() {
+async function step6_clickFinalButtonAndClose() {
   try {
     if (await checkAndCloseIfUnauthorized('Step6 before search', currentFR)) return;
 
@@ -365,96 +348,26 @@ async function step6_clickFinalButton() {
 
     btn.click();
     console.log('✅ Step6 clicked (المتابعة)');
-    await checkAndCloseIfUnauthorized('Step6 after', currentFR);
 
-  } catch (err) {
-    console.error('❌ Step6 error:', err);
-  }
-}
-
-// ========================
-// Step 7 - انتظار تغير الرابط واعتماد النجاح
-// ========================
-
-async function step7_waitForRedirectAndClose() {
-  try {
-    console.log('🛑 بانتظار تحويل الصفحة واعتماد النجاح...');
-    const startUrl = window.location.href;
-    const start = Date.now();
-    let isRedirected = false;
-
-    if (!currentFR) currentFR = extractFR();
-    const frValue = currentFR;
-
-    while (Date.now() - start < SUCCESS_TIMEOUT && !pageClosed) {
-      if (await checkAndCloseIfUnauthorized('Step7 wait redirect', frValue)) return;
-
-      const currentUrl = window.location.href;
-
-      // تحقق من تغير الرابط أو الخروج من صفحة تفاصيل الطلب
-      const leftCasePage = !currentUrl.includes('case-view') && !currentUrl.includes('deed-upgrade-case-view');
-      const urlChanged = currentUrl !== startUrl;
-
-      if (leftCasePage || urlChanged) {
-        isRedirected = true;
-        console.log(`🔀 تم الانتقال للصفحة الرئيسية: ${currentUrl}`);
-        break;
-      }
-
-      await delay(300);
-    }
-
-    if (pageClosed) return;
-    if (!frValue) {
-      console.warn("❌ لم يتم تحديد رقم الطلب");
-      await closeTabSafely();
-      return;
-    }
-
-    const current = await getFRData(frValue);
-    const retryCount = current?.retryCount || 0;
-
-    if (isRedirected) {
-      console.log(`✅ SUCCESS - اكتملت معالجة الطلب ${frValue}`);
+    // اعتماد الحالة SUCCESS مباشرة وتحديث زمن المعالجة
+    const frValue = currentFR || extractFR();
+    if (frValue) {
       await updateFRData(frValue, {
         message: "SUCCESS",
         retryCount: 0
       });
-    } else {
-      console.warn("❌ FAILED - لم يتم تحويل الرابط في الوقت المحدد");
-
-      const statusElement = document.querySelector('[class*="status"], [class*="حالة"], .bg-\\#BF524D1A, .bg-lightBlue');
-      const statusText = statusElement?.textContent?.trim() || '';
-
-      if (statusText.includes('معادة من العميل')) {
-        console.warn(`⚠️ ${frValue} طلب معاد من العميل`);
-        await updateFRData(frValue, {
-          status: statusText,
-          message: "CLIENT_RETURN_FAILED",
-          flag: "⚠️",
-          retryCount: 0
-        });
-      } else if (retryCount < MAX_RETRIES) {
-        await updateFRData(frValue, {
-          message: "PENDING",
-          retryCount: retryCount + 1
-        });
-        if (chrome?.runtime) {
-          chrome.runtime.sendMessage({ action: "retryFR", fr: frValue, delay: 5000 });
-        }
-      } else {
-        await updateFRData(frValue, {
-          message: "FAILED",
-          retryCount
-        });
-      }
+      console.log(`✅ تم تسجيل الطلب ${frValue} كـ SUCCESS بنجاح`);
     }
 
-    await delay(500);
+    // الانتظار ثانية واحدة (1000ms) لإتمام طلب الشبكة ثم إغلاق التبويب
+    console.log('⏱️ جاري إغلاق التبويب بعد ثانية واحدة...');
+    await delay(1000);
+
+    pageClosed = true;
     await closeTabSafely();
 
   } catch (err) {
-    console.error('❌ Step7 error:', err);
+    console.error('❌ Step6 error:', err);
   }
 }
 
@@ -474,7 +387,7 @@ async function runProcess() {
 
   await delay(200);
 
-  // تشغيل الأسهم بالنظام السريع وبدون سكرول
+  // تشغيل الأسهم بالنظام السريع
   await step4_clickArrowFast(6, 120);
   if (pageClosed) return;
 
@@ -485,11 +398,8 @@ async function runProcess() {
 
   await delay(300);
 
-  await step6_clickFinalButton();
-  if (pageClosed) return;
-
-  // فحص التحويل والإغلاق
-  await step7_waitForRedirectAndClose();
+  // النقر على المتابعة والتسجيل والإغلاق بعد ثانية
+  await step6_clickFinalButtonAndClose();
 }
 
 // ========================
