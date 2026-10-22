@@ -1,5 +1,5 @@
 // ========================
-// platform-content.js - فحص حالة الطلب في العمود السادس بالجدول
+// platform-content.js - فحص حالة الطلب في العمود السادس (مع دعم Geospatial Specialist)
 // ========================
 
 let currentFR = null;
@@ -180,7 +180,7 @@ function findLoadButton() {
 }
 
 // ========================
-// الخطوة 1: الضغط على تحميل الطلبات + فحص العمود السادس في الجدول
+// الخطوة 1: الضغط على تحميل الطلبات + فحص حالة المدقق الجيومكاني في العمود السادس
 // ========================
 
 async function step1_loadAndVerifyAuditorStatus() {
@@ -239,23 +239,25 @@ async function step1_loadAndVerifyAuditorStatus() {
       updateDebugBanner(`🧐 Column 6 Status: "${statusText}"`, '#38bdf8');
       await delay(1500);
 
-      // الكلمات المفتاحية الدالة على أن الطلب عند المدقق الجيومكاني
+      // الكلمات المفتاحية الدالة على أن الطلب عند المدقق الجيومكاني (عربي وإنجليزي)
       const isGeospatialAuditor = 
         statusUpper.includes('مدقق جيومكاني') ||
         statusUpper.includes('المدقق الجيومكاني') ||
+        statusUpper.includes('GEOSPATIAL SPECIALIST') ||
         statusUpper.includes('GEOSPATIAL AUDITOR') ||
         statusUpper.includes('GEOSPATIAL REVIEWER') ||
+        statusUpper.includes('SPECIALIST') ||
         statusUpper.includes('AUDITOR') ||
         statusUpper.includes('مدقق');
 
       if (isGeospatialAuditor) {
-        highlightElement(col6, 'success', 'Is Geospatial Auditor');
-        updateDebugBanner('✅ Case IS with Geospatial Auditor -> Proceeding!', '#10b981');
+        highlightElement(col6, 'success', 'Is Geospatial Specialist/Auditor');
+        updateDebugBanner('✅ Case IS with Geospatial Specialist -> Proceeding!', '#10b981');
         await delay(1200);
       } else {
         // إذا لم يكن عند المدقق الجيومكاني -> يعتبر منتهي بنجاح ويغلق
-        highlightElement(col6, 'success', 'Not Auditor -> Success');
-        updateDebugBanner(`✅ Status not auditor ("${statusText}") -> Marking SUCCESS!`, '#10b981');
+        highlightElement(col6, 'success', 'Not Specialist -> Success');
+        updateDebugBanner(`✅ Status not specialist ("${statusText}") -> Marking SUCCESS!`, '#10b981');
         await delay(1500);
         if (currentFR) {
           await updateFRData(currentFR, {
@@ -265,7 +267,7 @@ async function step1_loadAndVerifyAuditorStatus() {
           });
         }
         await closeTabSafely();
-        return false; // توقف ولا تكمل
+        return false;
       }
     } else {
       updateDebugBanner('⚠️ Column 6 not found in matched row, proceeding with caution...', '#eab308');
